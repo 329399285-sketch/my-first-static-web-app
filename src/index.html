@@ -3,13 +3,158 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>我的第一个网站</title>
-  <link rel="stylesheet" href="styles.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>词霸云端卡片系统</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
 </head>
 
 <body>
-  <h1>Hello Azure!</h1>
-  <p>这是我部署的第一个静态网站。</p>
+
+  <header class="navbar">
+    <div class="logo">WordCard<span>Pro</span></div>
+    <div class="controls">
+      <button class="btn btn-upload" onclick="document.getElementById('fileInput').click()">
+        <i class="fas fa-cloud-upload-alt"></i> 上传
+      </button>
+      <button class="btn btn-parse" onclick="parseWordDoc()">
+        <i class="fas fa-wand-magic-sparkles"></i> 解析
+      </button>
+      <button class="btn btn-download" onclick="mockAction('下载')">
+        <i class="fas fa-cloud-download-alt"></i> 下载
+      </button>
+      <button class="btn btn-delete" onclick="resetApp()">
+        <i class="fas fa-trash-can"></i> 删除
+      </button>
+      <input type="file" id="fileInput" accept=".docx" style="display: none;">
+    </div>
+  </header>
+
+  <main class="container">
+    <div id="emptyState" class="empty-view">
+      <div class="icon-circle"><i class="fas fa-file-lines"></i></div>
+      <h2>等待上传文档</h2>
+      <p>请上传符合格式的 .docx 文件并点击解析按钮</p>
+    </div>
+
+    <div class="card-slider" id="cardSlider">
+    </div>
+
+    <div class="navigation" id="navGroup" style="display: none;">
+      <button class="nav-btn" onclick="moveCard(-1)"><i class="fas fa-chevron-left"></i></button>
+      <div class="counter"><span id="currentIdx">1</span> / <span id="totalIdx">0</span></div>
+      <button class="nav-btn" onclick="moveCard(1)"><i class="fas fa-chevron-right"></i></button>
+    </div>
+  </main>
+
+  <script>
+    let words = [];
+    let currentIndex = 0;
+
+    // 解析 Word 文件
+    function parseWordDoc() {
+      const file = document.getElementById('fileInput').files[0];
+      if (!file) return alert("老铁，还没选文件呢！");
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        mammoth.extractRawText({ arrayBuffer: e.target.result })
+          .then(res => processRawText(res.value))
+          .catch(err => console.error(err));
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // 精准提取图片中的字段
+    function processRawText(fullText) {
+      // 根据数字序号分割 (例如 1:, 2:)
+      const blocks = fullText.split(/\n\s*\d+[:：]/).filter(b => b.trim());
+
+      words = blocks.map(block => {
+        return {
+          name: (block.match(/^\s*(\w+)/) || ["", "Unknown"])[1],
+          ipa: (block.match(/\{(.+?)\}/) || ["", ""])[1],
+          meaning: (block.match(/\[常见词义\]：(.+)/) || ["", "暂无"])[1],
+          rare: (block.match(/\[生僻词义\]：(.+)/) || ["", ""])[1],
+          mnemonic: (block.match(/\[谐音记忆法\]：(.+)/) || ["", ""])[1],
+          exampleEn: (block.match(/\[场景记忆法\]：(.+)/) || ["", ""])[1],
+          exampleCn: (block.match(/\[句子翻译\]：(.+)/) || ["", ""])[1]
+        };
+      });
+
+      if (words.length > 0) renderUI();
+    }
+
+    function renderUI() {
+      const slider = document.getElementById('cardSlider');
+      slider.innerHTML = '';
+      words.forEach((item, i) => {
+        const card = document.createElement('div');
+        card.className = `card ${i === 0 ? 'active' : ''}`;
+        card.innerHTML = `
+                    <div class="card-head">
+                        <div class="title-wrap">
+                            <h1>${item.name}</h1>
+                            <span class="ipa">/${item.ipa}/</span>
+                        </div>
+                        <button class="audio-btn" onclick="playVoice('${item.name}')">
+                            <i class="fas fa-volume-high"></i>
+                        </button>
+                    </div>
+                    <div class="tag-row">重点程度: 10分</div>
+                    <div class="content-body">
+                        <div class="item"><span class="label">【词义】</span>${item.meaning}</div>
+                        ${item.rare ? `<div class="item"><span class="label">【生僻】</span>${item.rare}</div>` : ''}
+                        <div class="item mnemonic"><span class="label">【记忆】</span>${item.mnemonic}</div>
+                        <div class="example-box">
+                            <p class="en">${item.exampleEn}</p>
+                            <p class="cn">${item.exampleCn}</p>
+                        </div>
+                    </div>
+                `;
+        slider.appendChild(card);
+      });
+
+      document.getElementById('emptyState').style.display = 'none';
+      document.getElementById('navGroup').style.display = 'flex';
+      document.getElementById('totalIdx').innerText = words.length;
+      currentIndex = 0;
+      updateCounter();
+    }
+
+    function moveCard(step) {
+      const newIndex = currentIndex + step;
+      if (newIndex < 0 || newIndex >= words.length) return;
+
+      const cards = document.querySelectorAll('.card');
+      cards[currentIndex].classList.remove('active');
+      currentIndex = newIndex;
+      cards[currentIndex].classList.add('active');
+      updateCounter();
+    }
+
+    function updateCounter() {
+      document.getElementById('currentIdx').innerText = currentIndex + 1;
+    }
+
+    function playVoice(text) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = 'en-US';
+      utterance.rate = 0.8;
+      window.speechSynthesis.speak(utterance);
+    }
+
+    function mockAction(type) {
+      if (words.length === 0) return alert("没有可操作的数据哦");
+      alert(`${type}成功！已同步至云端。`);
+    }
+
+    function resetApp() {
+      if (!confirm("确定清空所有数据吗？")) return;
+      location.reload();
+    }
+  </script>
 </body>
 
 </html>

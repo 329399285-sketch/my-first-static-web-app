@@ -1,9 +1,252 @@
-body {
-  font-family: Arial, sans-serif;
-  text-align: center;
-  margin-top: 100px;
+:root {
+  --primary: #6366f1;
+  --primary-hover: #4f46e5;
+  --danger: #ef4444;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --bg: #f8fafc;
+  --text-dark: #1e293b;
+  --text-light: #64748b;
 }
 
-h1 {
-  color: #0078d4;
+body {
+  margin: 0;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background-color: var(--bg);
+  color: var(--text-dark);
+}
+
+/* 导航栏 */
+.navbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 5%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.logo {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--primary);
+}
+
+.logo span {
+  color: var(--text-dark);
+}
+
+.controls {
+  display: flex;
+  gap: 0.8rem;
+}
+
+/* 按钮基础样式 */
+.btn {
+  padding: 0.6rem 1.2rem;
+  border: none;
+  border-radius: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: white;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.btn-upload {
+  background: var(--primary);
+}
+
+.btn-parse {
+  background: var(--warning);
+}
+
+.btn-download {
+  background: var(--success);
+}
+
+.btn-delete {
+  background: var(--danger);
+}
+
+.btn:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
+}
+
+/* 容器布局 */
+.container {
+  max-width: 600px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* 空状态 */
+.empty-view {
+  text-align: center;
+  margin-top: 5rem;
+  color: var(--text-light);
+}
+
+.icon-circle {
+  width: 80px;
+  height: 80px;
+  background: #e2e8f0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  margin: 0 auto 1.5rem;
+}
+
+/* 单词卡片逻辑 */
+.card-slider {
+  width: 100%;
+  min-height: 450px;
+  position: relative;
+}
+
+.card {
+  background: white;
+  border-radius: 24px;
+  padding: 2.5rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  position: absolute;
+  width: 100%;
+  box-sizing: border-box;
+  display: none;
+  animation: fadeIn 0.4s ease;
+}
+
+.card.active {
+  display: block;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 卡片内部细节 */
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.title-wrap h1 {
+  margin: 0;
+  font-size: 2.5rem;
+  color: var(--primary);
+}
+
+.ipa {
+  color: var(--text-light);
+  font-family: monospace;
+  font-size: 1.1rem;
+}
+
+.audio-btn {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  border: none;
+  background: #eff6ff;
+  color: var(--primary);
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: 0.3s;
+}
+
+.audio-btn:hover {
+  background: var(--primary);
+  color: white;
+}
+
+.tag-row {
+  display: inline-block;
+  background: #fef3c7;
+  color: #92400e;
+  padding: 0.2rem 0.8rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  margin-bottom: 1.5rem;
+}
+
+.content-body .item {
+  margin-bottom: 1rem;
+  line-height: 1.6;
+}
+
+.label {
+  font-weight: bold;
+  color: var(--primary);
+}
+
+.mnemonic {
+  padding: 0.8rem;
+  background: #f1f5f9;
+  border-radius: 12px;
+}
+
+.example-box {
+  margin-top: 1.5rem;
+  border-left: 4px solid #e2e8f0;
+  padding-left: 1rem;
+}
+
+.example-box .en {
+  font-style: italic;
+  color: var(--text-dark);
+  margin-bottom: 0.3rem;
+}
+
+.example-box .cn {
+  color: var(--text-light);
+  font-size: 0.9rem;
+}
+
+/* 翻页控制栏 */
+.navigation {
+  margin-top: 2rem;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.nav-btn {
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  border: 1px solid #e2e8f0;
+  background: white;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.nav-btn:hover {
+  background: var(--primary);
+  color: white;
+}
+
+.counter {
+  font-weight: 600;
+  color: var(--text-light);
 }
