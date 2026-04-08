@@ -2,79 +2,159 @@
 <html lang="zh-CN">
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI 智能单词卡片系统</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Word Card Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://unpkg.com/mammoth@1.7.2/mammoth.browser.min.js"></script>
 </head>
 
 <body>
-
-  <div class="app-container">
-    <header class="control-panel">
-      <h1><i class="fas fa-book-open"></i> 词汇解析云端</h1>
-      <div class="actions">
-        <label for="fileInput" class="btn btn-upload">
-          <i class="fas fa-cloud-upload-alt"></i> 上传 Word
-        </label>
-        <input type="file" id="fileInput" accept=".docx" hidden>
-
-        <button id="btnDownload" class="btn btn-download">
-          <i class="fas fa-download"></i> 下载数据
-        </button>
-
-        <button id="btnDelete" class="btn btn-delete">
-          <i class="fas fa-trash-alt"></i> 清空存储
-        </button>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-badge">W</div>
+        <div>
+          <h1>Word Card Studio</h1>
+          <p>上传 Word，智能解析单词卡</p>
+        </div>
       </div>
-      <div id="status" class="status-text">待上传文档...</div>
-    </header>
 
-    <main class="viewer">
-      <div id="cardWrapper" class="card-wrapper hidden">
-        <button id="prevBtn" class="nav-btn"><i class="fas fa-chevron-left"></i></button>
+      <div class="upload-panel glass">
+        <label class="upload-button">
+          <input id="fileInput" type="file" accept=".docx,.txt" multiple hidden />
+          <span>上传文档</span>
+        </label>
+        <button id="downloadDataBtn" class="secondary-btn">下载数据备份</button>
+      </div>
 
-        <div class="card" id="wordCard">
-          <div class="card-header">
-            <span class="word-id" id="wordId">1</span>
-            <h2 id="wordText">Word</h2>
-            <span class="phonetic" id="phonetic">[/.../]</span>
-            <button id="speakBtn" class="audio-btn"><i class="fas fa-volume-up"></i></button>
-          </div>
+      <div class="sidebar-section">
+        <div class="section-title-row">
+          <h2>今日应复习</h2>
+          <span id="todayReviewCount" class="muted-pill">0</span>
+        </div>
+        <div id="todayReviewList" class="review-list"></div>
+      </div>
 
-          <div class="card-body">
-            <div class="info-section">
-              <label>常见词义</label>
-              <p id="commonDef">-</p>
-            </div>
-            <div class="info-section">
-              <label>场景记忆</label>
-              <p id="sceneMem">-</p>
-            </div>
-            <div class="info-section">
-              <label>句子翻译</label>
-              <p id="sentenceTrans" class="italic">-</p>
-            </div>
-            <div class="info-section">
-              <label>词组搭配</label>
-              <p id="collocation">-</p>
-            </div>
-          </div>
+      <div class="sidebar-section">
+        <div class="section-title-row">
+          <h2>文件列表</h2>
+          <span id="fileCount" class="muted-pill">0</span>
+        </div>
+        <div id="fileList" class="file-list"></div>
+      </div>
+
+      <div class="sidebar-footer glass">
+        <h3>说明</h3>
+        <p>会自动跳过类似“单词复习清单 - 日期”的标题行，并识别 <code>[1]</code>、<code>1:</code>、<code>1：</code> 这类序号开头。</p>
+        <p>支持字段如 <code>[常见词义]</code>、<code>[重点程度]</code>、<code>[句子翻译]</code>。不同文件可分别解析。</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <div class="topbar glass">
+        <div>
+          <h2 id="currentDocTitle">请选择左侧文件并点击“解析”</h2>
+          <p id="currentDocMeta">解析后会在这里显示单词卡片，可左右切换、朗读和默写。</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="modeStudyBtn" class="mode-btn active">学习模式</button>
+          <button id="modeQuizBtn" class="mode-btn">默写模式</button>
+          <button id="downloadWrongBtn" class="secondary-inline-btn">下载错词 TXT</button>
+          <button id="prevCardBtn" class="icon-btn" title="上一张">←</button>
+          <button id="speakBtn" class="icon-btn speak-btn" title="朗读当前单词">🔊</button>
+          <button id="nextCardBtn" class="icon-btn" title="下一张">→</button>
+        </div>
+      </div>
+
+      <section id="emptyState" class="empty-state glass">
+        <div class="empty-orb"></div>
+        <h3>把你的单词 Word 文档放进来</h3>
+        <p>左侧上传后，可单独解析每个文件。系统会按序号分段，再把每个单词整理成大卡片。并根据文件名中的日期自动给出今日应复习的文件。</p>
+      </section>
+
+      <section id="cardsArea" class="cards-area hidden">
+        <div class="carousel-wrap">
+          <button id="prevOverlayBtn" class="nav-overlay left">❮</button>
+          <div id="cardsViewport" class="cards-viewport"></div>
+          <button id="nextOverlayBtn" class="nav-overlay right">❯</button>
         </div>
 
-        <button id="nextBtn" class="nav-btn"><i class="fas fa-chevron-right"></i></button>
-      </div>
-
-      <div id="emptyState" class="empty-state">
-        <i class="fas fa-file-word"></i>
-        <p>请上传您的单词 Word 文档进行解析</p>
-      </div>
+        <div class="footer-strip glass">
+          <div id="cardIndex" class="card-index">0 / 0</div>
+          <div id="cardMiniMeta" class="card-mini-meta">等待解析</div>
+        </div>
+      </section>
     </main>
   </div>
 
-  <script src="script.js"></script>
+  <template id="fileItemTemplate">
+    <div class="file-item glass">
+      <div class="file-item-main">
+        <div class="file-name"></div>
+        <div class="file-meta"></div>
+      </div>
+      <div class="file-actions">
+        <button class="parse-btn">解析</button>
+        <button class="delete-btn">删除</button>
+      </div>
+    </div>
+  </template>
+
+  <template id="reviewItemTemplate">
+    <div class="review-item glass">
+      <div class="review-name"></div>
+      <div class="review-meta"></div>
+      <button class="review-open-btn">打开并解析</button>
+    </div>
+  </template>
+
+  <template id="cardTemplate">
+    <article class="word-card glass">
+      <div class="card-top">
+        <div class="card-serial"></div>
+        <button class="small-speak-btn" title="朗读">🔊</button>
+      </div>
+      <div class="headword-row">
+        <h3 class="headword"></h3>
+        <div class="phonetic"></div>
+      </div>
+      <div class="pos-row"></div>
+      <div class="fields-grid"></div>
+    </article>
+  </template>
+
+  <template id="quizTemplate">
+    <article class="word-card quiz-card glass">
+      <div class="card-top">
+        <div class="card-serial"></div>
+        <button class="small-speak-btn" title="朗读">🔊</button>
+      </div>
+      <div class="quiz-head">
+        <div class="quiz-badge">默写模式</div>
+        <h3 class="headword"></h3>
+        <div class="phonetic"></div>
+      </div>
+      <div class="quiz-answer hidden">
+        <div class="quiz-meaning"></div>
+        <div class="quiz-extra"></div>
+      </div>
+      <div class="quiz-actions-top">
+        <button class="reveal-btn">显示释义</button>
+      </div>
+      <div class="quiz-judge hidden">
+        <button class="judge-btn correct">正确</button>
+        <button class="judge-btn wrong">错误</button>
+      </div>
+    </article>
+  </template>
+
+  <script src="app.js"></script>
 </body>
 
 </html>
