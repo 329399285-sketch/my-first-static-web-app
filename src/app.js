@@ -1,95 +1,117 @@
-const STORAGE_KEY = "word-card-studio-theme-v4";
-const DATA_KEY = "word-card-studio-files-v4";
+const STORAGE_KEY = "word-card-studio-files-v3";
+const THEME_STORAGE_KEY = "word-card-studio-theme-v1";
+const REVIEW_INTERVALS = [0, 1, 2, 4, 7, 15, 30];
+const FIELD_ORDER = [
+  "释义", "常见词义", "生僻词义", "重点程度", "谐音记忆法", "词根记忆法",
+  "场景记忆法", "例句", "句子翻译", "场景句子翻译", "词组搭配记忆法",
+  "搭配", "近义词", "反义词", "备注", "补充内容"
+];
+const SCORE_LABEL_KEYWORDS = ["重点程度", "评分", "分数", "重点", "难度", "score", "level"];
 
 const state = {
   files: [],
   selectedFileId: null,
   cards: [],
   currentCardIndex: 0,
+  mode: "study",
   theme: "light",
+  wrongEntries: [],
 };
 
-const els = {
-  fileInput: document.getElementById("fileInput"),
-  downloadDataBtn: document.getElementById("downloadDataBtn"),
-  themeToggleBtn: document.getElementById("themeToggleBtn"),
-  themeToggleText: document.getElementById("themeToggleText"),
-  fileList: document.getElementById("fileList"),
-  fileCount: document.getElementById("fileCount"),
-  currentDocTitle: document.getElementById("currentDocTitle"),
-  currentDocMeta: document.getElementById("currentDocMeta"),
-  emptyState: document.getElementById("emptyState"),
-  cardsArea: document.getElementById("cardsArea"),
-  cardsViewport: document.getElementById("cardsViewport"),
-  cardIndex: document.getElementById("cardIndex"),
-  cardMiniMeta: document.getElementById("cardMiniMeta"),
-  prevCardBtn: document.getElementById("prevCardBtn"),
-  nextCardBtn: document.getElementById("nextCardBtn"),
-  prevOverlayBtn: document.getElementById("prevOverlayBtn"),
-  nextOverlayBtn: document.getElementById("nextOverlayBtn"),
-  fileItemTemplate: document.getElementById("fileItemTemplate"),
-  cardTemplate: document.getElementById("cardTemplate"),
-};
+const fileInput = document.getElementById("fileInput");
+const fileList = document.getElementById("fileList");
+const fileCount = document.getElementById("fileCount");
+const downloadDataBtn = document.getElementById("downloadDataBtn");
+const downloadWrongBtn = document.getElementById("downloadWrongBtn");
+const currentDocTitle = document.getElementById("currentDocTitle");
+const currentDocMeta = document.getElementById("currentDocMeta");
+const emptyState = document.getElementById("emptyState");
+const cardsArea = document.getElementById("cardsArea");
+const cardsViewport = document.getElementById("cardsViewport");
+const cardIndex = document.getElementById("cardIndex");
+const cardMiniMeta = document.getElementById("cardMiniMeta");
+const prevCardBtn = document.getElementById("prevCardBtn");
+const nextCardBtn = document.getElementById("nextCardBtn");
+const prevOverlayBtn = document.getElementById("prevOverlayBtn");
+const nextOverlayBtn = document.getElementById("nextOverlayBtn");
+const speakBtn = document.getElementById("speakBtn");
+const fileItemTemplate = document.getElementById("fileItemTemplate");
+const cardTemplate = document.getElementById("cardTemplate");
+const quizTemplate = document.getElementById("quizTemplate");
+const modeStudyBtn = document.getElementById("modeStudyBtn");
+const modeQuizBtn = document.getElementById("modeQuizBtn");
+const themeLightBtn = document.getElementById("themeLightBtn");
+const themeDarkBtn = document.getElementById("themeDarkBtn");
+const todayReviewList = document.getElementById("todayReviewList");
+const todayReviewCount = document.getElementById("todayReviewCount");
+const reviewItemTemplate = document.getElementById("reviewItemTemplate");
 
 init();
 
 function init() {
-  loadTheme();
-  loadData();
+  loadFromStorage();
+  loadThemePreference();
   bindEvents();
-  applyTheme();
   renderFileList();
+  renderReviewList();
   renderCurrentView();
 }
 
 function bindEvents() {
-  els.fileInput.addEventListener("change", handleFilesSelected);
-  els.downloadDataBtn.addEventListener("click", exportData);
-  els.themeToggleBtn.addEventListener("click", toggleTheme);
-  els.prevCardBtn.addEventListener("click", () => moveCard(-1));
-  els.nextCardBtn.addEventListener("click", () => moveCard(1));
-  els.prevOverlayBtn.addEventListener("click", () => moveCard(-1));
-  els.nextOverlayBtn.addEventListener("click", () => moveCard(1));
+  fileInput.addEventListener("change", handleFilesSelected);
+  downloadDataBtn.addEventListener("click", exportData);
+  downloadWrongBtn.addEventListener("click", exportWrongEntries);
+  prevCardBtn.addEventListener("click", () => moveCard(-1));
+  nextCardBtn.addEventListener("click", () => moveCard(1));
+  prevOverlayBtn.addEventListener("click", () => moveCard(-1));
+  nextOverlayBtn.addEventListener("click", () => moveCard(1));
+  speakBtn.addEventListener("click", speakCurrentCard);
+  modeStudyBtn.addEventListener("click", () => switchMode("study"));
+  modeQuizBtn.addEventListener("click", () => switchMode("quiz"));
+  themeLightBtn?.addEventListener("click", () => setTheme("light"));
+  themeDarkBtn?.addEventListener("click", () => setTheme("dark"));
 
-  window.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowLeft") moveCard(-1);
-    if (e.key === "ArrowRight") moveCard(1);
+  window.addEventListener("keydown", (event) => {
+    if (!state.cards.length) return;
+    if (event.key === "ArrowLeft") moveCard(-1);
+    if (event.key === "ArrowRight") moveCard(1);
   });
 }
 
-function loadTheme() {
-  state.theme = localStorage.getItem(STORAGE_KEY) || "light";
-}
-
-function applyTheme() {
-  document.documentElement.setAttribute("data-theme", state.theme);
-  els.themeToggleText.textContent = state.theme === "light" ? "切换深色" : "切换浅色";
-  const icon = els.themeToggleBtn.querySelector(".theme-icon");
-  if (icon) icon.textContent = state.theme === "light" ? "☀️" : "🌙";
-}
-
-function toggleTheme() {
-  state.theme = state.theme === "light" ? "dark" : "light";
-  localStorage.setItem(STORAGE_KEY, state.theme);
+function loadThemePreference() {
+  const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+  if (savedTheme === "light" || savedTheme === "dark") {
+    state.theme = savedTheme;
+  } else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) {
+    state.theme = "dark";
+  } else {
+    state.theme = "light";
+  }
   applyTheme();
 }
 
-function loadData() {
+function loadFromStorage() {
   try {
-    const raw = localStorage.getItem(DATA_KEY);
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const data = JSON.parse(raw);
-    state.files = Array.isArray(data.files) ? data.files : [];
-    state.selectedFileId = data.selectedFileId || state.files[0]?.id || null;
-  } catch (e) {
-    console.warn("读取数据失败", e);
+    if (Array.isArray(data.files)) {
+      state.files = data.files;
+      state.selectedFileId = data.selectedFileId || data.files[0]?.id || null;
+    }
+    if (Array.isArray(data.wrongEntries)) {
+      state.wrongEntries = data.wrongEntries;
+    }
+  } catch (error) {
+    console.warn("读取本地数据失败：", error);
   }
 }
 
-function saveData() {
-  localStorage.setItem(DATA_KEY, JSON.stringify({
+function saveToStorage() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
     files: state.files,
     selectedFileId: state.selectedFileId,
+    wrongEntries: state.wrongEntries,
   }));
 }
 
@@ -97,189 +119,286 @@ async function handleFilesSelected(event) {
   const files = Array.from(event.target.files || []);
   for (const file of files) {
     try {
-      const rawText = await readFileAsText(file);
+      const text = await readFileAsText(file);
       state.files.unshift({
         id: crypto.randomUUID(),
         name: file.name,
+        type: file.type || detectTypeByName(file.name),
         size: file.size,
         createdAt: new Date().toISOString(),
-        rawText: normalizeText(rawText),
+        rawText: normalizeText(text),
         parsedCards: [],
         parsedAt: null,
       });
-    } catch (err) {
-      alert(`读取失败：${file.name}\n${err.message}`);
+    } catch (error) {
+      alert(`文件 ${file.name} 读取失败：${error.message}`);
     }
   }
+
   event.target.value = "";
-  if (!state.selectedFileId && state.files[0]) state.selectedFileId = state.files[0].id;
-  saveData();
+  if (!state.selectedFileId && state.files[0]) {
+    state.selectedFileId = state.files[0].id;
+  }
+  saveToStorage();
   renderFileList();
+  renderReviewList();
   renderCurrentView();
 }
 
+function detectTypeByName(name = "") {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".txt")) return "text/plain";
+  return "unknown";
+}
+
 async function readFileAsText(file) {
-  const name = file.name.toLowerCase();
-  if (name.endsWith(".docx")) {
+  const lowerName = file.name.toLowerCase();
+  if (lowerName.endsWith(".docx")) {
     const arrayBuffer = await file.arrayBuffer();
     const result = await mammoth.extractRawText({ arrayBuffer });
     return result.value || "";
   }
-  return await file.text();
-}
-
-function normalizeText(text = "") {
-  return text
-    .replace(/\r/g, "")
-    .replace(/[\u00A0\t]/g, " ")
-    .replace(/[ ]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return file.text();
 }
 
 function renderFileList() {
-  els.fileList.innerHTML = "";
-  els.fileCount.textContent = String(state.files.length);
+  fileList.innerHTML = "";
+  fileCount.textContent = String(state.files.length);
 
   if (!state.files.length) {
     const div = document.createElement("div");
-    div.className = "panel-soft";
+    div.className = "glass";
+    div.style.borderRadius = "18px";
     div.style.padding = "16px";
     div.style.color = "var(--muted)";
-    div.textContent = "还没有文件，先上传一个。";
-    els.fileList.appendChild(div);
+    div.textContent = "还没有文件，先上传一个 Word 文档。";
+    fileList.appendChild(div);
     return;
   }
 
   for (const file of state.files) {
-    const node = els.fileItemTemplate.content.firstElementChild.cloneNode(true);
+    const node = fileItemTemplate.content.firstElementChild.cloneNode(true);
     node.classList.toggle("active", file.id === state.selectedFileId);
+    const date = extractDateFromName(file.name);
 
     node.querySelector(".file-name").textContent = file.name;
-    node.querySelector(".file-meta").textContent = `${formatSize(file.size)} · ${file.parsedCards?.length || 0} 张卡片`;
+    node.querySelector(".file-meta").textContent = [
+      formatSize(file.size),
+      date ? `文件日期 ${date}` : "未识别日期",
+      `${file.parsedCards?.length || 0} 张卡片`,
+    ].join(" · ");
 
-    node.querySelector(".file-item-head").addEventListener("click", () => {
+    node.querySelector(".file-item-main").addEventListener("click", () => {
       state.selectedFileId = file.id;
-      state.cards = [];
+      state.cards = file.parsedCards || [];
+      state.currentCardIndex = 0;
+      saveToStorage();
       renderFileList();
       renderCurrentView();
-      saveData();
     });
 
     node.querySelector(".parse-btn").addEventListener("click", () => parseDocument(file.id));
     node.querySelector(".delete-btn").addEventListener("click", () => deleteFile(file.id));
-
-    els.fileList.appendChild(node);
+    fileList.appendChild(node);
   }
 }
 
+function renderReviewList() {
+  todayReviewList.innerHTML = "";
+  const dueFiles = getTodayReviewFiles();
+  todayReviewCount.textContent = String(dueFiles.length);
+
+  if (!dueFiles.length) {
+    const empty = document.createElement("div");
+    empty.className = "glass";
+    empty.style.borderRadius = "18px";
+    empty.style.padding = "14px";
+    empty.style.color = "var(--muted)";
+    empty.textContent = "今天没有命中的复习文件。上传更多带日期的文档后会自动计算。";
+    todayReviewList.appendChild(empty);
+    return;
+  }
+
+  for (const item of dueFiles) {
+    const node = reviewItemTemplate.content.firstElementChild.cloneNode(true);
+    node.querySelector(".review-name").textContent = item.file.name;
+    node.querySelector(".review-meta").textContent = `第 ${item.dayDiff} 天 · ${item.reason}`;
+    node.querySelector(".review-open-btn").addEventListener("click", () => {
+      state.selectedFileId = item.file.id;
+      if (!item.file.parsedCards?.length) parseDocument(item.file.id);
+      else {
+        state.cards = item.file.parsedCards;
+        state.currentCardIndex = 0;
+        saveToStorage();
+        renderFileList();
+        renderCurrentView();
+      }
+    });
+    todayReviewList.appendChild(node);
+  }
+}
+
+function renderCurrentView() {
+  const current = getSelectedFile();
+  updateModeButtons();
+
+  if (!current) {
+    emptyState.classList.remove("hidden");
+    cardsArea.classList.add("hidden");
+    currentDocTitle.textContent = "请选择左侧文件并点击“解析”";
+    currentDocMeta.textContent = "解析后会在这里显示单词卡片，可左右切换、朗读和默写。";
+    return;
+  }
+
+  currentDocTitle.textContent = current.name;
+  currentDocMeta.textContent = current.parsedAt
+    ? `最近解析：${formatDateTime(current.parsedAt)}，共 ${current.parsedCards.length} 张卡片，错词 ${getWrongCountForFile(current.id)} 条`
+    : "尚未解析，点击左侧“解析”按钮开始。";
+
+  if (!current.parsedCards?.length) {
+    emptyState.classList.remove("hidden");
+    cardsArea.classList.add("hidden");
+    return;
+  }
+
+  state.cards = current.parsedCards;
+  if (state.currentCardIndex >= state.cards.length) state.currentCardIndex = 0;
+  emptyState.classList.add("hidden");
+  cardsArea.classList.remove("hidden");
+  renderCard();
+}
+
 function parseDocument(fileId) {
-  const file = state.files.find(x => x.id === fileId);
+  const file = state.files.find((item) => item.id === fileId);
   if (!file) return;
 
-  const cards = parseVocabularyText(file.rawText);
+  const cards = parseVocabularyText(file.rawText, file.id);
   file.parsedCards = cards;
   file.parsedAt = new Date().toISOString();
-
   state.selectedFileId = file.id;
   state.cards = cards;
   state.currentCardIndex = 0;
 
-  saveData();
+  saveToStorage();
   renderFileList();
+  renderReviewList();
   renderCurrentView();
 
   if (!cards.length) {
-    alert("本次没有识别到单词，请把文档发我，我再继续强化解析逻辑。");
+    alert("没有识别到单词卡。当前版本会优先识别连续文本里的“数字+冒号+英文单词”结构，例如 1：access。\n如仍失败，请把出问题文件继续发我，我会再针对样式修正。");
+  } else {
+    alert(`解析完成：共识别 ${cards.length} 个单词。`);
   }
 }
 
 function deleteFile(fileId) {
-  if (!confirm("确定删除这个文件吗？")) return;
-  state.files = state.files.filter(x => x.id !== fileId);
+  const index = state.files.findIndex((item) => item.id === fileId);
+  if (index === -1) return;
+  const removed = state.files[index];
+  if (!confirm(`确定删除文件“${removed.name}”吗？`)) return;
+
+  state.files.splice(index, 1);
+  state.wrongEntries = state.wrongEntries.filter((item) => item.fileId !== fileId);
+
   if (state.selectedFileId === fileId) {
     state.selectedFileId = state.files[0]?.id || null;
     state.cards = [];
     state.currentCardIndex = 0;
   }
-  saveData();
+
+  saveToStorage();
   renderFileList();
+  renderReviewList();
   renderCurrentView();
-}
-
-function renderCurrentView() {
-  const file = getSelectedFile();
-  if (!file) {
-    els.currentDocTitle.textContent = "请选择左侧文件并点击“解析”";
-    els.currentDocMeta.textContent = "解析后会在中间生成卡片，支持左右切换、发音和更优排版。";
-    els.emptyState.classList.remove("hidden");
-    els.cardsArea.classList.add("hidden");
-    return;
-  }
-
-  els.currentDocTitle.textContent = file.name;
-  els.currentDocMeta.textContent = file.parsedAt
-    ? `最近解析：${new Date(file.parsedAt).toLocaleString("zh-CN")}，共 ${file.parsedCards.length} 张卡片`
-    : "尚未解析，点击左侧解析按钮。";
-
-  if (!file.parsedCards?.length) {
-    els.emptyState.classList.remove("hidden");
-    els.cardsArea.classList.add("hidden");
-    return;
-  }
-
-  state.cards = file.parsedCards;
-  if (state.currentCardIndex >= state.cards.length) state.currentCardIndex = 0;
-
-  els.emptyState.classList.add("hidden");
-  els.cardsArea.classList.remove("hidden");
-  renderCard();
 }
 
 function renderCard() {
   const card = state.cards[state.currentCardIndex];
   if (!card) return;
+  cardsViewport.innerHTML = "";
 
-  els.cardsViewport.innerHTML = "";
-  const node = els.cardTemplate.content.firstElementChild.cloneNode(true);
+  if (state.mode === "quiz") renderQuizCard(card);
+  else renderStudyCard(card);
 
-  node.querySelector(".serial-badge").textContent = `第 ${card.serial || state.currentCardIndex + 1} 个单词`;
+  cardIndex.textContent = `${state.currentCardIndex + 1} / ${state.cards.length}`;
+  const score = getCardScoreValue(card);
+  const scoreMeta = score ? ` · 重点 ${score}` : "";
+  const wrongMark = hasWrongEntry(card.id) ? " · 已记错" : "";
+  cardMiniMeta.textContent = `${card.word || "未识别"}${card.phonetic ? " · " + card.phonetic : ""}${scoreMeta}${wrongMark}`;
+}
+
+function renderStudyCard(card) {
+  const node = cardTemplate.content.firstElementChild.cloneNode(true);
+  node.querySelector(".card-serial").textContent = `第 ${card.serial || state.currentCardIndex + 1} 个单词`;
   node.querySelector(".headword").textContent = card.word || "未识别单词";
   node.querySelector(".phonetic").textContent = card.phonetic || "";
-
-  const score = card.fields?.["重点程度"] || card.fields?.["评分"] || card.fields?.["分数"] || "";
-  node.querySelector(".score-chip").textContent = score ? `${score}` : "待评分";
-  node.querySelector(".speak-word-btn").addEventListener("click", () => speakWord(card.word));
+  renderHeadwordScore(node, card);
 
   const posRow = node.querySelector(".pos-row");
-  for (const pos of normalizePos(card.pos || "")) {
-    const span = document.createElement("span");
-    span.className = "pos-chip";
-    span.textContent = pos;
-    posRow.appendChild(span);
-  }
-  if (!posRow.children.length) {
-    const span = document.createElement("span");
-    span.className = "pos-chip";
-    span.textContent = "词性待识别";
-    posRow.appendChild(span);
+  const posList = normalizePos(card.pos || "");
+  if (posList.length) {
+    for (const pos of posList) {
+      const chip = document.createElement("span");
+      chip.className = "pos-chip";
+      chip.textContent = pos;
+      posRow.appendChild(chip);
+    }
+  } else {
+    posRow.innerHTML = `<span class="pos-chip">词性待识别</span>`;
   }
 
-  const primaryMeaning = card.fields?.["常见词义"] || card.fields?.["释义"] || card.fields?.["词义"] || "暂无释义";
-  node.querySelector(".meaning-banner").textContent = `核心释义：${primaryMeaning}`;
-
-  const grid = node.querySelector(".fields-grid");
+  const fieldsGrid = node.querySelector(".fields-grid");
   for (const [label, value] of orderFields(card.fields || {})) {
-    if (["重点程度","评分","分数","常见词义","释义","词义"].includes(label)) continue;
-    const item = document.createElement("div");
-    item.className = "field-card";
-    item.innerHTML = `<div class="field-label">${escapeHtml(label)}</div><div class="field-value">${escapeHtml(value || "—")}</div>`;
-    grid.appendChild(item);
+    const field = document.createElement("div");
+    field.className = "field-card";
+    field.innerHTML = `<div class="field-label">${escapeHtml(label)}</div><div class="field-value">${escapeHtml(value || "—")}</div>`;
+    fieldsGrid.appendChild(field);
   }
 
-  els.cardsViewport.appendChild(node);
-  els.cardIndex.textContent = `${state.currentCardIndex + 1} / ${state.cards.length}`;
-  els.cardMiniMeta.textContent = `${card.word || "未识别"}${score ? " · " + score : ""}`;
+  node.querySelector(".small-speak-btn").addEventListener("click", () => speakWord(card.word));
+  cardsViewport.appendChild(node);
+}
+
+function renderQuizCard(card) {
+  const node = quizTemplate.content.firstElementChild.cloneNode(true);
+  node.querySelector(".card-serial").textContent = `第 ${card.serial || state.currentCardIndex + 1} 个单词`;
+  node.querySelector(".headword").textContent = card.word || "未识别单词";
+  node.querySelector(".phonetic").textContent = card.phonetic || "";
+  renderHeadwordScore(node, card);
+
+  const answerBox = node.querySelector(".quiz-answer");
+  const judgeBox = node.querySelector(".quiz-judge");
+  const meaningEl = node.querySelector(".quiz-meaning");
+  const extraEl = node.querySelector(".quiz-extra");
+
+  const meaning = card.fields?.["释义"] || card.fields?.["常见词义"] || card.fields?.["生僻词义"] || "未识别释义";
+  const extra = [
+    card.fields?.["生僻词义"] ? `生僻词义：${card.fields["生僻词义"]}` : "",
+    card.fields?.["句子翻译"] ? `句子翻译：${card.fields["句子翻译"]}` : "",
+    card.fields?.["词组搭配记忆法"] ? `搭配：${card.fields["词组搭配记忆法"]}` : "",
+  ].filter(Boolean).join("\n");
+
+  meaningEl.textContent = `释义：${meaning}`;
+  extraEl.textContent = extra || "点击“正确”或“错误”后会自动进入下一张。";
+
+  node.querySelector(".reveal-btn").addEventListener("click", () => {
+    answerBox.classList.remove("hidden");
+    judgeBox.classList.remove("hidden");
+  });
+
+  node.querySelector(".judge-btn.correct").addEventListener("click", () => {
+    removeWrongEntry(card.id);
+    moveCard(1);
+  });
+
+  node.querySelector(".judge-btn.wrong").addEventListener("click", () => {
+    addWrongEntry(card);
+    moveCard(1);
+  });
+
+  node.querySelector(".small-speak-btn").addEventListener("click", () => speakWord(card.word));
+  cardsViewport.appendChild(node);
 }
 
 function moveCard(delta) {
@@ -288,119 +407,356 @@ function moveCard(delta) {
   renderCard();
 }
 
+function switchMode(mode) {
+  state.mode = mode;
+  updateModeButtons();
+  renderCard();
+}
+
+function updateModeButtons() {
+  modeStudyBtn.classList.toggle("active", state.mode === "study");
+  modeQuizBtn.classList.toggle("active", state.mode === "quiz");
+}
+
+function setTheme(theme) {
+  if (theme !== "light" && theme !== "dark") return;
+  state.theme = theme;
+  localStorage.setItem(THEME_STORAGE_KEY, theme);
+  applyTheme();
+}
+
+function applyTheme() {
+  document.documentElement.setAttribute("data-theme", state.theme);
+  updateThemeButtons();
+}
+
+function updateThemeButtons() {
+  themeLightBtn?.classList.toggle("active", state.theme === "light");
+  themeDarkBtn?.classList.toggle("active", state.theme === "dark");
+}
+
+function renderHeadwordScore(node, card) {
+  const scoreEl = node.querySelector(".headword-score");
+  if (!scoreEl) return;
+  const scoreValue = getCardScoreValue(card);
+
+  if (!scoreValue) {
+    scoreEl.textContent = "";
+    scoreEl.classList.add("hidden");
+    return;
+  }
+
+  scoreEl.textContent = scoreValue;
+  scoreEl.classList.remove("hidden");
+}
+
+function getCardScoreValue(card) {
+  const fields = card?.fields || {};
+  for (const [label, value] of Object.entries(fields)) {
+    const normalizedLabel = String(label || "").trim().toLowerCase();
+    if (!normalizedLabel) continue;
+    if (!SCORE_LABEL_KEYWORDS.some((keyword) => normalizedLabel.includes(keyword.toLowerCase()))) continue;
+    return normalizeScoreText(value);
+  }
+  return "";
+}
+
+function normalizeScoreText(value) {
+  if (value == null) return "";
+  const text = String(value).trim();
+  if (!text) return "";
+
+  const matchedScore = text.match(/\d+(?:\.\d+)?(?:\s*\/\s*\d+)?/);
+  if (matchedScore) return matchedScore[0].replace(/\s+/g, "");
+
+  return text.length > 8 ? `${text.slice(0, 8)}…` : text;
+}
+
+function speakCurrentCard() {
+  const card = state.cards[state.currentCardIndex];
+  if (card) speakWord(card.word);
+}
+
 function speakWord(word) {
-  if (!word || !("speechSynthesis" in window)) return;
+  if (!word || !window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(word);
   utter.lang = "en-US";
   utter.rate = 0.92;
-  speechSynthesis.speak(utter);
+  window.speechSynthesis.speak(utter);
 }
 
-function getSelectedFile() {
-  return state.files.find(x => x.id === state.selectedFileId) || null;
+function addWrongEntry(card) {
+  if (hasWrongEntry(card.id)) return;
+  const currentFile = getSelectedFile();
+  state.wrongEntries.push({
+    id: card.id,
+    fileId: currentFile?.id || "",
+    fileName: currentFile?.name || "",
+    serial: card.serial,
+    word: card.word,
+    raw: card.raw || rebuildRawText(card),
+    addedAt: new Date().toISOString(),
+  });
+  saveToStorage();
+  renderCurrentView();
+}
+
+function removeWrongEntry(cardId) {
+  const before = state.wrongEntries.length;
+  state.wrongEntries = state.wrongEntries.filter((item) => item.id !== cardId);
+  if (before !== state.wrongEntries.length) {
+    saveToStorage();
+    renderCurrentView();
+  }
+}
+
+function hasWrongEntry(cardId) {
+  return state.wrongEntries.some((item) => item.id === cardId);
+}
+
+function getWrongCountForFile(fileId) {
+  return state.wrongEntries.filter((item) => item.fileId === fileId).length;
+}
+
+function exportWrongEntries() {
+  if (!state.wrongEntries.length) {
+    alert("当前还没有错词记录。");
+    return;
+  }
+
+  const grouped = groupBy(state.wrongEntries, (item) => item.fileName);
+  const parts = [];
+  for (const [fileName, items] of Object.entries(grouped)) {
+    parts.push(`单词复习清单错词汇总 - ${fileName}`);
+    parts.push("");
+    items.sort((a, b) => Number(a.serial || 0) - Number(b.serial || 0));
+    for (const item of items) {
+      parts.push(item.raw.trim());
+      parts.push("");
+    }
+    parts.push("========================================");
+    parts.push("");
+  }
+
+  const blob = new Blob([parts.join("\n")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `错词汇总_${formatDateOnly(new Date())}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function exportData() {
-  const blob = new Blob([JSON.stringify({
+  const payload = {
     exportedAt: new Date().toISOString(),
-    files: state.files
-  }, null, 2)], { type: "application/json;charset=utf-8" });
+    files: state.files,
+    wrongEntries: state.wrongEntries,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = "word-card-studio-data.json";
   a.click();
-  URL.revokeObjectURL(a.href);
+  URL.revokeObjectURL(url);
 }
 
-function parseVocabularyText(text) {
-  const clean = normalizeText(text)
-    .replace(/^单词复习清单\s*[-—–]\s*\d{4}-\d{2}-\d{2}\s*/m, "")
-    .replace(/单词复习清单\s*[-—–]\s*\d{4}-\d{2}-\d{2}/g, "");
+function getSelectedFile() {
+  return state.files.find((file) => file.id === state.selectedFileId) || null;
+}
 
-  if (!clean) return [];
-  const markers = [...clean.matchAll(/(?:^|\n|\s)(?:\[?(\d+)\]?\s*[：:.．]\s*)([A-Za-z][A-Za-z\-']*)/g)];
-  if (!markers.length) return [];
+function getTodayReviewFiles() {
+  const today = startOfDay(new Date());
+  return state.files
+    .map((file) => {
+      const dateString = extractDateFromName(file.name);
+      if (!dateString) return null;
+      const fileDate = parseDate(dateString);
+      const dayDiff = daysBetween(fileDate, today);
+      if (!REVIEW_INTERVALS.includes(dayDiff)) return null;
+      return {
+        file,
+        dayDiff,
+        reason: dayDiff === 0 ? "今天新学，建议首次学习" : `符合艾宾浩斯第 ${dayDiff} 天复习`,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.dayDiff - b.dayDiff);
+}
 
+function normalizeText(text = "") {
+  return text
+    .replace(/\r/g, "")
+    .replace(/[\u00A0\t]+/g, " ")
+    .replace(/\u200b/g, "")
+    .replace(/[ ]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function parseVocabularyText(text, fileId) {
+  let normalized = normalizeText(text);
+  if (!normalized) return [];
+
+  normalized = normalized
+    .replace(/^\s*单词复习清单\s*[-－—:：]?\s*\d{4}-\d{2}-\d{2}\s*\n?/gm, "")
+    .replace(/^\s*单词复习清单.*$/gm, "")
+    .trim();
+
+  const chunks = splitIntoWordChunks(normalized);
+  return chunks
+    .map((chunk) => parseWordChunk(chunk, fileId))
+    .filter((item) => item && item.word);
+}
+
+function splitIntoWordChunks(text) {
+  const flat = text.replace(/\n+/g, " ").replace(/\s{2,}/g, " ").trim();
+  if (!flat) return [];
+
+  const entryRegex = /(\d{1,3})\s*[：:．.]\s*([A-Za-z][\s\S]*?)(?=(?:\d{1,3}\s*[：:．.]\s*[A-Za-z])|$)/g;
   const chunks = [];
-  for (let i = 0; i < markers.length; i++) {
-    const start = markers[i].index + (markers[i][0].startsWith(" ") ? 1 : 0);
-    const end = i < markers.length - 1 ? markers[i + 1].index : clean.length;
-    chunks.push(clean.slice(start, end).trim());
+  let match;
+
+  while ((match = entryRegex.exec(flat)) !== null) {
+    const serial = (match[1] || "").trim();
+    const content = (match[2] || "").trim();
+    if (content) chunks.push(`${serial}：${content}`);
   }
-  return chunks.map(parseWordChunk).filter(Boolean);
+  return chunks;
 }
 
-function parseWordChunk(chunk) {
-  const text = chunk.trim();
-  const match =
-    text.match(/^\[?(\d+)\]?\s*[：:.．]\s*([A-Za-z][A-Za-z\-']*)\s*(.*)$/s) ||
-    text.match(/^\[(\d+)\]\s*([A-Za-z][A-Za-z\-']*)\s*(.*)$/s);
-
+function parseWordChunk(chunk, fileId) {
+  const original = chunk.trim();
+  const match = original.match(/^\s*(\d{1,3})\s*[：:．.]\s*([A-Za-z][\s\S]*)$/);
   if (!match) return null;
 
-  const serial = match[1] || "";
-  const word = match[2] || "";
-  let rest = match[3] || "";
+  const serial = (match[1] || "").trim();
+  const content = (match[2] || "").trim();
+  const info = parseHeader(content);
+  if (!info.word) return null;
 
-  const phoneticMatch = rest.match(/[\{【\[]\s*(\/[^{}【】\[\]]+\/|[^{}【】\[\]]+)\s*[】}\]]/);
-  const phonetic = phoneticMatch ? phoneticMatch[1].trim() : "";
-  if (phoneticMatch) rest = rest.replace(phoneticMatch[0], " ");
-
-  let pos = "";
-  const posMatch = rest.match(/\[([^\]]*(?:名词|动词|形容词|副词|代词|介词|连词|短语|数词|冠词)[^\]]*)\]/);
-  if (posMatch) {
-    pos = posMatch[1].trim();
-    rest = rest.replace(posMatch[0], " ");
-  }
-
-  rest = rest.replace(/\n/g, " ");
-  const fields = {};
-  const regex = /\[([^\]]{1,20})\]\s*[：:]?\s*/g;
-  let m;
-  const found = [];
-
-  while ((m = regex.exec(rest)) !== null) {
-    found.push({ label: m[1].trim(), start: m.index, end: regex.lastIndex });
-  }
-
-  if (!found.length) {
-    fields["内容"] = rest.trim();
-  } else {
-    for (let i = 0; i < found.length; i++) {
-      const current = found[i];
-      const next = found[i + 1];
-      const value = rest.slice(current.end, next ? next.start : rest.length).trim();
-      if (value) fields[current.label] = value.replace(/\s{2,}/g, " ");
-    }
-  }
-
-  return { serial, word, phonetic, pos, fields, raw: text };
+  const fields = parseFields(content);
+  return {
+    id: `${fileId || "file"}-${serial}-${info.word.toLowerCase()}`,
+    fileId,
+    serial,
+    word: info.word,
+    phonetic: info.phonetic,
+    pos: info.pos,
+    fields,
+    raw: rebuildRawText({ serial, word: info.word, phonetic: info.phonetic, pos: info.pos, fields }),
+  };
 }
 
-function normalizePos(text) {
-  return String(text || "")
-    .split(/[、,，/\s]+/)
-    .map(s => s.trim())
-    .filter(Boolean);
+function parseHeader(content) {
+  const clean = (content || "").trim();
+  if (!clean) return { word: "", phonetic: "", pos: "" };
+
+  const wordMatch = clean.match(/^([A-Za-z][A-Za-z'\-]*)/);
+  const word = wordMatch ? wordMatch[1].trim() : "";
+
+  const phoneticMatch = clean.match(/\{\s*([^{}]+?)\s*\}/) || clean.match(/\/(.+?)\//);
+  const phonetic = phoneticMatch ? phoneticMatch[1].trim() : "";
+
+  const posMatch = clean.match(/\[([^\]]*(?:名词|动词|形容词|副词|代词|介词|连词|数词|冠词|短语)[^\]]*)\]/);
+  const pos = posMatch ? posMatch[1].trim() : "";
+
+  return { word, phonetic, pos };
+}
+
+function parseFields(content) {
+  const fields = {};
+  if (!content) return fields;
+
+  const labelRegex = /\[([^\[\]]+?)\]\s*[：:]\s*([\s\S]*?)(?=(?:\[[^\[\]]+?\]\s*[：:])|$)/g;
+  let match;
+
+  while ((match = labelRegex.exec(content)) !== null) {
+    const label = (match[1] || "").trim();
+    const value = (match[2] || "")
+      .replace(/\s*\n\s*/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
+    if (!label || !value) continue;
+    fields[label] = value;
+  }
+
+  return fields;
+}
+
+function isLikelyLooseLabel(label) {
+  return FIELD_ORDER.includes(label);
+}
+
+function rebuildRawText(card) {
+  const header = `${card.serial}：${card.word}${card.phonetic ? ` {/${String(card.phonetic).replace(/^\/+|\/+$/g, "")}/}` : ""}${card.pos ? ` [${card.pos}]` : ""}`;
+  const body = orderFields(card.fields || {}).map(([k, v]) => `[${k}]：${v}`).join("\n");
+  return `${header}\n${body}`.trim();
+}
+
+function normalizePos(posText) {
+  if (!posText) return [];
+  return posText.split(/[、,，/\s]+/).map((s) => s.trim()).filter(Boolean);
 }
 
 function orderFields(fields) {
-  const preferred = ["常见词义","生僻词义","重点程度","评分","分数","谐音记忆法","词根记忆法","场景记忆法","句子翻译","词组搭配记忆法","例句","备注","内容"];
-  return Object.entries(fields).sort((a, b) => {
-    const ai = preferred.indexOf(a[0]);
-    const bi = preferred.indexOf(b[0]);
+  const entries = Object.entries(fields || {});
+  entries.sort((a, b) => {
+    const ai = FIELD_ORDER.indexOf(a[0]);
+    const bi = FIELD_ORDER.indexOf(b[0]);
     if (ai === -1 && bi === -1) return a[0].localeCompare(b[0], "zh-CN");
     if (ai === -1) return 1;
     if (bi === -1) return -1;
     return ai - bi;
   });
+  return entries;
+}
+
+function extractDateFromName(name = "") {
+  const match = name.match(/(20\d{2}-\d{2}-\d{2})/);
+  return match ? match[1] : "";
+}
+
+function parseDate(dateString) {
+  const [year, month, day] = dateString.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function daysBetween(earlier, later) {
+  return Math.round((startOfDay(later) - startOfDay(earlier)) / 86400000);
+}
+
+function groupBy(array, getKey) {
+  return array.reduce((acc, item) => {
+    const key = getKey(item);
+    acc[key] ||= [];
+    acc[key].push(item);
+    return acc;
+  }, {});
 }
 
 function formatSize(size = 0) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(2)} MB`;
+  return `${(size / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatDateTime(iso) {
+  return new Date(iso).toLocaleString("zh-CN");
+}
+
+function formatDateOnly(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
 }
 
 function escapeHtml(value) {
@@ -408,6 +764,6 @@ function escapeHtml(value) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
+    .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
 }
