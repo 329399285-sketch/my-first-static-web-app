@@ -61,6 +61,7 @@
         <div>
           <h2 id="currentDocTitle">请选择左侧文件并点击“解析”</h2>
           <p id="currentDocMeta">解析后会在这里显示单词卡片，可左右切换、朗读和默写。</p>
+          <div id="cloudSyncStatus" class="cloud-sync-status">云端：未连接</div>
         </div>
         <div class="topbar-actions">
           <div class="theme-toggle">
@@ -69,6 +70,8 @@
           </div>
           <button id="modeStudyBtn" class="mode-btn active">学习模式</button>
           <button id="modeQuizBtn" class="mode-btn">默写模式</button>
+          <button id="syncCloudBtn" class="secondary-inline-btn">云端同步</button>
+          <button id="downloadPdfBtn" class="secondary-inline-btn">下载 PDF</button>
           <button id="downloadWrongBtn" class="secondary-inline-btn">下载错词 TXT</button>
           <button id="prevCardBtn" class="icon-btn" title="上一张">←</button>
           <button id="speakBtn" class="icon-btn speak-btn" title="朗读当前单词">🔊</button>
@@ -162,6 +165,7 @@
     </article>
   </template>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
   <script src="app.js"></script>
 </body>
 

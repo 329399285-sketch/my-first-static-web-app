@@ -368,6 +368,38 @@ body::after {
   color: var(--muted);
 }
 
+.cloud-sync-status {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel-strong) 90%, transparent);
+}
+
+.cloud-sync-status.ok {
+  color: color-mix(in srgb, var(--success) 84%, #0f172a);
+  border-color: color-mix(in srgb, var(--success) 36%, transparent);
+  background: color-mix(in srgb, var(--success) 12%, var(--panel));
+}
+
+.cloud-sync-status.error {
+  color: color-mix(in srgb, var(--danger) 82%, #0f172a);
+  border-color: color-mix(in srgb, var(--danger) 34%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+}
+
+.cloud-sync-status.syncing {
+  color: color-mix(in srgb, var(--accent-strong) 88%, #0f172a);
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 86%, transparent);
+}
+
 .topbar-actions {
   display: flex;
   gap: 10px;
@@ -737,6 +769,54 @@ body::after {
 .card-index {
   font-weight: 700;
   color: var(--text);
+}
+
+.pdf-export-root {
+  position: fixed;
+  left: -200vw;
+  top: 0;
+  width: 794px;
+  background: #ffffff;
+  color: #0f172a;
+  font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  padding: 28px;
+  line-height: 1.6;
+}
+
+.pdf-export-root h1 {
+  margin: 0 0 8px;
+  font-size: 24px;
+}
+
+.pdf-export-root > p {
+  margin: 0 0 16px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.pdf-export-card {
+  border: 1px solid #dbe4ef;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+  break-inside: avoid;
+}
+
+.pdf-export-card h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.pdf-export-pos {
+  margin-bottom: 8px;
+  color: #2563eb;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.pdf-export-row {
+  margin: 0 0 6px;
+  font-size: 13px;
 }
 
 @keyframes fadeRise {

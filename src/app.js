@@ -1,5 +1,6 @@
 const STORAGE_KEY = "word-card-studio-files-v3";
 const THEME_STORAGE_KEY = "word-card-studio-theme-v1";
+const CLOUD_API_BASE = "/api/documents";
 const REVIEW_INTERVALS = [0, 1, 2, 4, 7, 15, 30];
 const FIELD_ORDER = [
   "释义", "常见词义", "生僻词义", "重点程度", "谐音记忆法", "词根记忆法",
@@ -15,6 +16,8 @@ const state = {
   currentCardIndex: 0,
   mode: "study",
   theme: "light",
+  cloudEnabled: false,
+  cloudStatus: "云端：未连接",
   wrongEntries: [],
 };
 
@@ -40,6 +43,9 @@ const cardTemplate = document.getElementById("cardTemplate");
 const quizTemplate = document.getElementById("quizTemplate");
 const modeStudyBtn = document.getElementById("modeStudyBtn");
 const modeQuizBtn = document.getElementById("modeQuizBtn");
+const syncCloudBtn = document.getElementById("syncCloudBtn");
+const downloadPdfBtn = document.getElementById("downloadPdfBtn");
+const cloudSyncStatus = document.getElementById("cloudSyncStatus");
 const themeLightBtn = document.getElementById("themeLightBtn");
 const themeDarkBtn = document.getElementById("themeDarkBtn");
 const todayReviewList = document.getElementById("todayReviewList");
@@ -52,9 +58,11 @@ function init() {
   loadFromStorage();
   loadThemePreference();
   bindEvents();
+  updateCloudSyncStatus(state.cloudStatus);
   renderFileList();
   renderReviewList();
   renderCurrentView();
+  void initializeCloudSync();
 }
 
 function bindEvents() {
@@ -68,6 +76,8 @@ function bindEvents() {
   speakBtn.addEventListener("click", speakCurrentCard);
   modeStudyBtn.addEventListener("click", () => switchMode("study"));
   modeQuizBtn.addEventListener("click", () => switchMode("quiz"));
+  syncCloudBtn?.addEventListener("click", () => void syncFromCloud(true));
+  downloadPdfBtn?.addEventListener("click", () => void exportCurrentFilePdf());
   themeLightBtn?.addEventListener("click", () => setTheme("light"));
   themeDarkBtn?.addEventListener("click", () => setTheme("dark"));
 
@@ -75,6 +85,12 @@ function bindEvents() {
     if (!state.cards.length) return;
     if (event.key === "ArrowLeft") moveCard(-1);
     if (event.key === "ArrowRight") moveCard(1);
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.cloudEnabled) {
+      void syncFromCloud(false);
+    }
   });
 }
 
@@ -115,12 +131,181 @@ function saveToStorage() {
   }));
 }
 
+async function initializeCloudSync() {
+  updateCloudSyncStatus("云端：连接中...", "syncing");
+  const cloudDocuments = await fetchCloudDocuments();
+  if (!cloudDocuments) {
+    state.cloudEnabled = false;
+    updateCloudSyncStatus("云端：不可用，当前仅本地", "error");
+    return;
+  }
+
+  state.cloudEnabled = true;
+
+  if (cloudDocuments.length) {
+    applyCloudDocuments(cloudDocuments);
+    updateCloudSyncStatus(`云端：已同步 ${cloudDocuments.length} 份文档`, "ok");
+    return;
+  }
+
+  if (!state.files.length) {
+    updateCloudSyncStatus("云端：已连接（暂无文档）", "ok");
+    return;
+  }
+
+  updateCloudSyncStatus("云端：首次上传中...", "syncing");
+  for (const file of state.files) {
+    const uploaded = await upsertCloudDocument(file, true);
+    if (!uploaded) {
+      state.cloudEnabled = false;
+      updateCloudSyncStatus("云端：首次上传失败，已回退本地", "error");
+      return;
+    }
+  }
+
+  updateCloudSyncStatus(`云端：已上传 ${state.files.length} 份文档`, "ok");
+}
+
+async function syncFromCloud(manual = false) {
+  updateCloudSyncStatus("云端：同步中...", "syncing");
+  const cloudDocuments = await fetchCloudDocuments();
+
+  if (!cloudDocuments) {
+    state.cloudEnabled = false;
+    updateCloudSyncStatus("云端：同步失败，当前仅本地", "error");
+    return;
+  }
+
+  state.cloudEnabled = true;
+
+  if (cloudDocuments.length) {
+    applyCloudDocuments(cloudDocuments);
+    updateCloudSyncStatus(`云端：已同步 ${cloudDocuments.length} 份文档`, "ok");
+    return;
+  }
+
+  if (manual) {
+    updateCloudSyncStatus("云端：暂无文档", "ok");
+  } else {
+    updateCloudSyncStatus("云端：已连接（暂无文档）", "ok");
+  }
+}
+
+function applyCloudDocuments(documents) {
+  state.files = documents.map(normalizeCloudDocument);
+  if (!state.files.some((item) => item.id === state.selectedFileId)) {
+    state.selectedFileId = state.files[0]?.id || null;
+    state.currentCardIndex = 0;
+  }
+  saveToStorage();
+  renderFileList();
+  renderReviewList();
+  renderCurrentView();
+}
+
+async function fetchCloudDocuments() {
+  try {
+    const response = await fetch(CLOUD_API_BASE, {
+      method: "GET",
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    if (Array.isArray(payload?.documents)) return payload.documents;
+    if (Array.isArray(payload)) return payload;
+    return [];
+  } catch (error) {
+    console.warn("拉取云端文档失败：", error);
+    return null;
+  }
+}
+
+function normalizeCloudDocument(input) {
+  const raw = input || {};
+  return {
+    id: String(raw.id || crypto.randomUUID()),
+    name: String(raw.name || "未命名文档"),
+    type: String(raw.type || "text/plain"),
+    size: Number(raw.size || 0),
+    createdAt: raw.createdAt || new Date().toISOString(),
+    rawText: typeof raw.rawText === "string" ? raw.rawText : "",
+    parsedCards: Array.isArray(raw.parsedCards) ? raw.parsedCards : [],
+    parsedAt: raw.parsedAt || null,
+  };
+}
+
+function buildCloudPayload(file) {
+  return {
+    id: file.id,
+    name: file.name,
+    type: file.type,
+    size: file.size,
+    createdAt: file.createdAt,
+    rawText: file.rawText,
+    parsedCards: file.parsedCards,
+    parsedAt: file.parsedAt,
+  };
+}
+
+async function upsertCloudDocument(file, silent = false) {
+  try {
+    const payload = buildCloudPayload(file);
+    const response = await fetch(`${CLOUD_API_BASE}/${encodeURIComponent(file.id)}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    if (!silent) updateCloudSyncStatus(`云端：已更新 ${file.name}`, "ok");
+    return true;
+  } catch (error) {
+    console.warn("上传云端失败：", error);
+    if (!silent) updateCloudSyncStatus("云端：更新失败，稍后重试", "error");
+    return false;
+  }
+}
+
+async function deleteCloudDocument(fileId) {
+  try {
+    const response = await fetch(`${CLOUD_API_BASE}/${encodeURIComponent(fileId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    updateCloudSyncStatus("云端：删除成功", "ok");
+  } catch (error) {
+    console.warn("删除云端文档失败：", error);
+    updateCloudSyncStatus("云端：删除失败，稍后重试", "error");
+  }
+}
+
+function updateCloudSyncStatus(message, status = "normal") {
+  state.cloudStatus = message;
+  if (!cloudSyncStatus) return;
+
+  cloudSyncStatus.textContent = message;
+  cloudSyncStatus.classList.remove("ok", "error", "syncing");
+  if (status === "ok" || status === "error" || status === "syncing") {
+    cloudSyncStatus.classList.add(status);
+  }
+}
+
 async function handleFilesSelected(event) {
   const files = Array.from(event.target.files || []);
+  const uploadedFiles = [];
   for (const file of files) {
     try {
       const text = await readFileAsText(file);
-      state.files.unshift({
+      const uploaded = {
         id: crypto.randomUUID(),
         name: file.name,
         type: file.type || detectTypeByName(file.name),
@@ -129,7 +314,9 @@ async function handleFilesSelected(event) {
         rawText: normalizeText(text),
         parsedCards: [],
         parsedAt: null,
-      });
+      };
+      state.files.unshift(uploaded);
+      uploadedFiles.push(uploaded);
     } catch (error) {
       alert(`文件 ${file.name} 读取失败：${error.message}`);
     }
@@ -143,6 +330,12 @@ async function handleFilesSelected(event) {
   renderFileList();
   renderReviewList();
   renderCurrentView();
+
+  if (state.cloudEnabled) {
+    for (const file of uploadedFiles) {
+      void upsertCloudDocument(file);
+    }
+  }
 }
 
 function detectTypeByName(name = "") {
@@ -284,6 +477,7 @@ function parseDocument(fileId) {
   renderFileList();
   renderReviewList();
   renderCurrentView();
+  if (state.cloudEnabled) void upsertCloudDocument(file);
 
   if (!cards.length) {
     alert("没有识别到单词卡。当前版本会优先识别连续文本里的“数字+冒号+英文单词”结构，例如 1：access。\n如仍失败，请把出问题文件继续发我，我会再针对样式修正。");
@@ -311,6 +505,7 @@ function deleteFile(fileId) {
   renderFileList();
   renderReviewList();
   renderCurrentView();
+  if (state.cloudEnabled) void deleteCloudDocument(fileId);
 }
 
 function renderCard() {
@@ -561,6 +756,92 @@ function exportData() {
   a.download = "word-card-studio-data.json";
   a.click();
   URL.revokeObjectURL(url);
+}
+
+async function exportCurrentFilePdf() {
+  const current = getSelectedFile();
+  if (!current) {
+    alert("请先选择一个文档。");
+    return;
+  }
+  if (!current.parsedCards?.length) {
+    alert("当前文档还未解析，请先点击“解析”。");
+    return;
+  }
+  if (typeof window.html2pdf !== "function") {
+    alert("PDF 模块加载失败，请稍后重试。");
+    return;
+  }
+
+  const exportRoot = buildPdfExportNode(current);
+  document.body.appendChild(exportRoot);
+
+  const filename = `${sanitizeFilename(current.name.replace(/\.[^.]+$/, "")) || "word-cards"}.pdf`;
+  try {
+    await window.html2pdf()
+      .set({
+        margin: [10, 10, 10, 10],
+        filename,
+        image: { type: "jpeg", quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+        pagebreak: { mode: ["css", "legacy"] },
+      })
+      .from(exportRoot)
+      .save();
+  } catch (error) {
+    console.warn("导出 PDF 失败：", error);
+    alert("PDF 导出失败，请稍后重试。");
+  } finally {
+    exportRoot.remove();
+  }
+}
+
+function buildPdfExportNode(file) {
+  const root = document.createElement("div");
+  root.className = "pdf-export-root";
+
+  const title = document.createElement("h1");
+  title.textContent = file.name;
+  root.appendChild(title);
+
+  const meta = document.createElement("p");
+  meta.textContent = `导出时间：${new Date().toLocaleString("zh-CN")}  ·  共 ${file.parsedCards.length} 个单词`;
+  root.appendChild(meta);
+
+  for (const card of file.parsedCards) {
+    const cardNode = document.createElement("section");
+    cardNode.className = "pdf-export-card";
+
+    const score = getCardScoreValue(card);
+    const header = document.createElement("h2");
+    header.textContent = `${card.serial || ""}. ${card.word || "未识别"}${card.phonetic ? `  /${card.phonetic}/` : ""}${score ? `  [重点 ${score}]` : ""}`;
+    cardNode.appendChild(header);
+
+    const pos = document.createElement("div");
+    pos.className = "pdf-export-pos";
+    pos.textContent = card.pos ? `词性：${normalizePos(card.pos).join(" / ")}` : "词性：待识别";
+    cardNode.appendChild(pos);
+
+    const fields = orderFields(card.fields || {});
+    for (const [label, value] of fields) {
+      const row = document.createElement("p");
+      row.className = "pdf-export-row";
+      row.textContent = `${label}：${value || "—"}`;
+      cardNode.appendChild(row);
+    }
+
+    root.appendChild(cardNode);
+  }
+
+  return root;
+}
+
+function sanitizeFilename(name) {
+  return String(name || "")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function getSelectedFile() {
