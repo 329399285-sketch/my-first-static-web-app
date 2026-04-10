@@ -1,5 +1,6 @@
 const STORAGE_KEY = "word-card-studio-files-v3";
 const THEME_STORAGE_KEY = "word-card-studio-theme-v1";
+const COMPLETION_KEY = "word-card-studio-completions-v1";
 const CLOUD_API_BASE = "/api/documents";
 const REVIEW_INTERVALS = [0, 1, 2, 4, 7, 15, 30];
 const FIELD_ORDER = [
@@ -16,10 +17,19 @@ const state = {
   currentCardIndex: 0,
   mode: "study",
   theme: "light",
+  lastMoveDirection: "next",
+  touchStartX: 0,
+  touchStartY: 0,
+  touchTracking: false,
+  lastSpokenWord: "",
+  lastSpokenAt: 0,
+  completions: {},
   cloudEnabled: false,
   cloudStatus: "云端：未连接",
   wrongEntries: [],
 };
+let autoSpeakTimer = null;
+let preferredSpeechVoice = null;
 
 const fileInput = document.getElementById("fileInput");
 const fileList = document.getElementById("fileList");
@@ -41,8 +51,14 @@ const speakBtn = document.getElementById("speakBtn");
 const fileItemTemplate = document.getElementById("fileItemTemplate");
 const cardTemplate = document.getElementById("cardTemplate");
 const quizTemplate = document.getElementById("quizTemplate");
+const choiceTemplate = document.getElementById("choiceTemplate");
 const modeStudyBtn = document.getElementById("modeStudyBtn");
+const modeChoiceBtn = document.getElementById("modeChoiceBtn");
 const modeQuizBtn = document.getElementById("modeQuizBtn");
+const reviewSection = document.getElementById("reviewSection");
+const fileSection = document.getElementById("fileSection");
+const toggleReviewBtn = document.getElementById("toggleReviewBtn");
+const toggleFileBtn = document.getElementById("toggleFileBtn");
 const syncCloudBtn = document.getElementById("syncCloudBtn");
 const downloadPdfBtn = document.getElementById("downloadPdfBtn");
 const cloudSyncStatus = document.getElementById("cloudSyncStatus");
@@ -56,8 +72,11 @@ init();
 
 function init() {
   loadFromStorage();
+  loadCompletions();
   loadThemePreference();
   bindEvents();
+  setupSpeechEngine();
+  applySidebarSectionState();
   updateCloudSyncStatus(state.cloudStatus);
   renderFileList();
   renderReviewList();
@@ -75,7 +94,10 @@ function bindEvents() {
   nextOverlayBtn.addEventListener("click", () => moveCard(1));
   speakBtn.addEventListener("click", speakCurrentCard);
   modeStudyBtn.addEventListener("click", () => switchMode("study"));
+  modeChoiceBtn.addEventListener("click", () => switchMode("choice"));
   modeQuizBtn.addEventListener("click", () => switchMode("quiz"));
+  toggleReviewBtn?.addEventListener("click", () => toggleSidebarSection("review"));
+  toggleFileBtn?.addEventListener("click", () => toggleSidebarSection("file"));
   syncCloudBtn?.addEventListener("click", () => void syncFromCloud(true));
   downloadPdfBtn?.addEventListener("click", () => void exportCurrentFilePdf());
   themeLightBtn?.addEventListener("click", () => setTheme("light"));
@@ -92,6 +114,9 @@ function bindEvents() {
       void syncFromCloud(false);
     }
   });
+
+  cardsViewport.addEventListener("touchstart", handleTouchStart, { passive: true });
+  cardsViewport.addEventListener("touchend", handleTouchEnd, { passive: true });
 }
 
 function loadThemePreference() {
@@ -123,12 +148,29 @@ function loadFromStorage() {
   }
 }
 
+function loadCompletions() {
+  try {
+    const raw = localStorage.getItem(COMPLETION_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      state.completions = parsed;
+    }
+  } catch (error) {
+    console.warn("读取完成状态失败：", error);
+  }
+}
+
 function saveToStorage() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     files: state.files,
     selectedFileId: state.selectedFileId,
     wrongEntries: state.wrongEntries,
   }));
+}
+
+function saveCompletions() {
+  localStorage.setItem(COMPLETION_KEY, JSON.stringify(state.completions));
 }
 
 async function initializeCloudSync() {
@@ -297,6 +339,49 @@ function updateCloudSyncStatus(message, status = "normal") {
   if (status === "ok" || status === "error" || status === "syncing") {
     cloudSyncStatus.classList.add(status);
   }
+}
+
+function applySidebarSectionState() {
+  reviewSection?.classList.remove("collapsed");
+  fileSection?.classList.remove("collapsed");
+  updateSidebarToggleIcons();
+}
+
+function toggleSidebarSection(type) {
+  const target = type === "review" ? reviewSection : fileSection;
+  if (!target) return;
+  target.classList.toggle("collapsed");
+  updateSidebarToggleIcons();
+}
+
+function updateSidebarToggleIcons() {
+  if (toggleReviewBtn) {
+    toggleReviewBtn.textContent = reviewSection?.classList.contains("collapsed") ? "▸" : "▾";
+  }
+  if (toggleFileBtn) {
+    toggleFileBtn.textContent = fileSection?.classList.contains("collapsed") ? "▸" : "▾";
+  }
+}
+
+function handleTouchStart(event) {
+  const touch = event.changedTouches?.[0];
+  if (!touch) return;
+  state.touchStartX = touch.clientX;
+  state.touchStartY = touch.clientY;
+  state.touchTracking = true;
+}
+
+function handleTouchEnd(event) {
+  if (!state.touchTracking || !state.cards.length) return;
+  state.touchTracking = false;
+  const touch = event.changedTouches?.[0];
+  if (!touch) return;
+
+  const deltaX = touch.clientX - state.touchStartX;
+  const deltaY = touch.clientY - state.touchStartY;
+  if (Math.abs(deltaX) < 48 || Math.abs(deltaX) < Math.abs(deltaY)) return;
+
+  moveCard(deltaX < 0 ? 1 : -1);
 }
 
 async function handleFilesSelected(event) {
@@ -514,13 +599,20 @@ function renderCard() {
   cardsViewport.innerHTML = "";
 
   if (state.mode === "quiz") renderQuizCard(card);
+  else if (state.mode === "choice") renderChoiceCard(card);
   else renderStudyCard(card);
+
+  const cardNode = cardsViewport.firstElementChild;
+  if (cardNode) {
+    cardNode.classList.add(state.lastMoveDirection === "prev" ? "card-slide-prev" : "card-slide-next");
+  }
 
   cardIndex.textContent = `${state.currentCardIndex + 1} / ${state.cards.length}`;
   const score = getCardScoreValue(card);
   const scoreMeta = score ? ` · 重点 ${score}` : "";
   const wrongMark = hasWrongEntry(card.id) ? " · 已记错" : "";
   cardMiniMeta.textContent = `${card.word || "未识别"}${card.phonetic ? " · " + card.phonetic : ""}${scoreMeta}${wrongMark}`;
+  queueAutoSpeak(card.word);
 }
 
 function renderStudyCard(card) {
@@ -551,7 +643,7 @@ function renderStudyCard(card) {
     fieldsGrid.appendChild(field);
   }
 
-  node.querySelector(".small-speak-btn").addEventListener("click", () => speakWord(card.word));
+  node.querySelector(".small-speak-btn").addEventListener("click", () => speakWord(card.word, { auto: false }));
   cardsViewport.appendChild(node);
 }
 
@@ -583,34 +675,115 @@ function renderQuizCard(card) {
   });
 
   node.querySelector(".judge-btn.correct").addEventListener("click", () => {
-    removeWrongEntry(card.id);
-    moveCard(1);
+    removeWrongEntry(card.id, true);
+    advanceQuizCard();
   });
 
   node.querySelector(".judge-btn.wrong").addEventListener("click", () => {
-    addWrongEntry(card);
-    moveCard(1);
+    addWrongEntry(card, true);
+    advanceQuizCard();
   });
 
-  node.querySelector(".small-speak-btn").addEventListener("click", () => speakWord(card.word));
+  node.querySelector(".small-speak-btn").addEventListener("click", () => speakWord(card.word, { auto: false }));
+  cardsViewport.appendChild(node);
+}
+
+function renderChoiceCard(card) {
+  const node = choiceTemplate.content.firstElementChild.cloneNode(true);
+  node.querySelector(".card-serial").textContent = `第 ${card.serial || state.currentCardIndex + 1} 个单词`;
+  node.querySelector(".headword").textContent = card.word || "未识别单词";
+  node.querySelector(".phonetic").textContent = card.phonetic || "";
+
+  const optionsWrap = node.querySelector(".choice-options");
+  const feedbackEl = node.querySelector(".choice-feedback");
+  const options = buildChoiceOptions(card);
+  const correctMeaning = getPrimaryMeaning(card);
+
+  for (const optionText of options) {
+    const btn = document.createElement("button");
+    btn.className = "choice-option-btn";
+    btn.textContent = optionText || "—";
+    btn.addEventListener("click", async () => {
+      if (btn.disabled) return;
+      optionsWrap.querySelectorAll("button").forEach((item) => { item.disabled = true; });
+
+      const isCorrect = optionText === correctMeaning;
+      if (isCorrect) {
+        btn.classList.add("correct");
+        feedbackEl.textContent = "回答正确，继续下一个";
+        feedbackEl.classList.remove("hidden");
+        feedbackEl.classList.add("correct");
+        removeWrongEntry(card.id, true);
+        setTimeout(() => moveCard(1), 420);
+        return;
+      }
+
+      addWrongEntry(card, true);
+      btn.classList.add("wrong");
+      node.classList.add("choice-wrong-pulse");
+      feedbackEl.textContent = "回答错误，显示该词解析";
+      feedbackEl.classList.remove("hidden");
+      feedbackEl.classList.add("wrong");
+      await showWrongAnswerOverlay(card);
+      moveCard(1);
+    });
+    optionsWrap.appendChild(btn);
+  }
+
+  node.querySelector(".small-speak-btn").addEventListener("click", () => speakWord(card.word, { auto: false }));
   cardsViewport.appendChild(node);
 }
 
 function moveCard(delta) {
   if (!state.cards.length) return;
-  state.currentCardIndex = (state.currentCardIndex + delta + state.cards.length) % state.cards.length;
+  const previous = state.currentCardIndex;
+  const next = (state.currentCardIndex + delta + state.cards.length) % state.cards.length;
+  const wrappedForward = delta > 0 && previous === state.cards.length - 1 && next === 0;
+  state.lastMoveDirection = delta < 0 ? "prev" : "next";
+  state.currentCardIndex = next;
   renderCard();
+  if (state.mode === "quiz" && wrappedForward) {
+    showCompletionCelebration();
+  }
 }
 
 function switchMode(mode) {
   state.mode = mode;
   updateModeButtons();
-  renderCard();
+  renderCurrentView();
 }
 
 function updateModeButtons() {
   modeStudyBtn.classList.toggle("active", state.mode === "study");
+  modeChoiceBtn.classList.toggle("active", state.mode === "choice");
   modeQuizBtn.classList.toggle("active", state.mode === "quiz");
+}
+
+function advanceQuizCard() {
+  moveCard(1);
+}
+
+function showCompletionCelebration() {
+  const file = getSelectedFile();
+  if (!file) return;
+  const dateText = extractDateFromName(file.name) || formatDateOnly(new Date());
+  const key = `${file.id}-${dateText}`;
+  if (state.completions[key]) return;
+  state.completions[key] = true;
+  saveCompletions();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "completion-overlay";
+  backdrop.innerHTML = `
+    <div class="completion-panel">
+      <div class="completion-spark">✨</div>
+      <h3>${dateText} 学习已完成</h3>
+      <p>今天这组单词已经完成一轮默写，继续保持节奏！</p>
+      <button class="completion-btn">继续学习</button>
+    </div>
+  `;
+  backdrop.querySelector(".completion-btn")?.addEventListener("click", () => backdrop.remove());
+  document.body.appendChild(backdrop);
 }
 
 function setTheme(theme) {
@@ -667,21 +840,140 @@ function normalizeScoreText(value) {
   return text.length > 8 ? `${text.slice(0, 8)}…` : text;
 }
 
+function getPrimaryMeaning(card) {
+  return card.fields?.["释义"] || card.fields?.["常见词义"] || card.fields?.["生僻词义"] || "未识别释义";
+}
+
+function buildChoiceOptions(card) {
+  const correct = getPrimaryMeaning(card);
+  const pool = [];
+
+  for (const other of state.cards) {
+    if (!other || other.id === card.id) continue;
+    const meaning = getPrimaryMeaning(other);
+    if (meaning && meaning !== correct && !pool.includes(meaning)) {
+      pool.push(meaning);
+    }
+  }
+
+  const picked = shuffleArray(pool).slice(0, 3);
+  while (picked.length < 3) {
+    picked.push(`干扰项 ${picked.length + 1}`);
+  }
+
+  return shuffleArray([correct, ...picked]);
+}
+
+async function showWrongAnswerOverlay(card) {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "answer-overlay-backdrop";
+
+    const panel = document.createElement("div");
+    panel.className = "answer-overlay-panel";
+
+    const title = document.createElement("h3");
+    title.textContent = `${card.word || "未识别"} 的解析`;
+    panel.appendChild(title);
+
+    const meaning = document.createElement("p");
+    meaning.textContent = `释义：${getPrimaryMeaning(card)}`;
+    panel.appendChild(meaning);
+
+    for (const [label, value] of orderFields(card.fields || {})) {
+      const line = document.createElement("p");
+      line.className = "answer-overlay-line";
+      line.textContent = `${label}：${value}`;
+      panel.appendChild(line);
+    }
+
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "answer-overlay-btn";
+    nextBtn.textContent = "继续下一个";
+    nextBtn.addEventListener("click", () => {
+      backdrop.remove();
+      resolve();
+    });
+
+    panel.appendChild(nextBtn);
+    backdrop.appendChild(panel);
+    document.body.appendChild(backdrop);
+  });
+}
+
+function shuffleArray(input) {
+  const arr = [...input];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function setupSpeechEngine() {
+  if (!window.speechSynthesis) return;
+  refreshPreferredVoice();
+  window.speechSynthesis.addEventListener("voiceschanged", refreshPreferredVoice);
+}
+
+function refreshPreferredVoice() {
+  if (!window.speechSynthesis) return;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices?.length) return;
+
+  preferredSpeechVoice =
+    voices.find((voice) => /en-US/i.test(voice.lang) && !/Google UK/i.test(voice.name)) ||
+    voices.find((voice) => /^en/i.test(voice.lang)) ||
+    voices[0] ||
+    null;
+}
+
 function speakCurrentCard() {
   const card = state.cards[state.currentCardIndex];
-  if (card) speakWord(card.word);
+  if (card) speakWord(card.word, { auto: false });
 }
 
-function speakWord(word) {
+function queueAutoSpeak(word) {
+  if (!word) return;
+  if (autoSpeakTimer) clearTimeout(autoSpeakTimer);
+  autoSpeakTimer = setTimeout(() => {
+    speakWord(word, { auto: true });
+  }, 70);
+}
+
+function speakWord(word, options = {}) {
+  const auto = Boolean(options.auto);
   if (!word || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
+  const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+  if (auto && state.lastSpokenWord === word && now - state.lastSpokenAt < 550) {
+    return;
+  }
+
+  if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+    window.speechSynthesis.cancel();
+  }
+
   const utter = new SpeechSynthesisUtterance(word);
-  utter.lang = "en-US";
-  utter.rate = 0.92;
+  utter.lang = preferredSpeechVoice?.lang || "en-US";
+  utter.rate = auto ? 0.96 : 1.02;
+  utter.pitch = 1;
+  utter.volume = 1;
+  if (preferredSpeechVoice) {
+    utter.voice = preferredSpeechVoice;
+  }
+
+  try {
+    window.speechSynthesis.resume();
+  } catch (error) {
+    console.warn("语音引擎唤醒失败：", error);
+  }
+
   window.speechSynthesis.speak(utter);
+  state.lastSpokenWord = word;
+  state.lastSpokenAt = now;
 }
 
-function addWrongEntry(card) {
+function addWrongEntry(card, skipRefresh = false) {
   if (hasWrongEntry(card.id)) return;
   const currentFile = getSelectedFile();
   state.wrongEntries.push({
@@ -694,15 +986,15 @@ function addWrongEntry(card) {
     addedAt: new Date().toISOString(),
   });
   saveToStorage();
-  renderCurrentView();
+  if (!skipRefresh) renderCurrentView();
 }
 
-function removeWrongEntry(cardId) {
+function removeWrongEntry(cardId, skipRefresh = false) {
   const before = state.wrongEntries.length;
   state.wrongEntries = state.wrongEntries.filter((item) => item.id !== cardId);
   if (before !== state.wrongEntries.length) {
     saveToStorage();
-    renderCurrentView();
+    if (!skipRefresh) renderCurrentView();
   }
 }
 
@@ -714,33 +1006,33 @@ function getWrongCountForFile(fileId) {
   return state.wrongEntries.filter((item) => item.fileId === fileId).length;
 }
 
-function exportWrongEntries() {
+async function exportWrongEntries() {
   if (!state.wrongEntries.length) {
     alert("当前还没有错词记录。");
     return;
   }
-
   const grouped = groupBy(state.wrongEntries, (item) => item.fileName);
-  const parts = [];
+  const sections = [];
   for (const [fileName, items] of Object.entries(grouped)) {
-    parts.push(`单词复习清单错词汇总 - ${fileName}`);
-    parts.push("");
     items.sort((a, b) => Number(a.serial || 0) - Number(b.serial || 0));
-    for (const item of items) {
-      parts.push(item.raw.trim());
-      parts.push("");
-    }
-    parts.push("========================================");
-    parts.push("");
+    const bodyParts = items.map((item) => `${item.serial || "-"} · ${item.word || "未识别"}\n${item.raw || ""}`);
+    sections.push({
+      title: fileName || "未命名文档",
+      body: bodyParts.join("\n\n========================================\n\n"),
+    });
   }
 
-  const blob = new Blob([parts.join("\n")], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `错词汇总_${formatDateOnly(new Date())}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
+  try {
+    exportTextSectionsToPdf({
+      filename: `错词汇总_${formatDateOnly(new Date())}.pdf`,
+      title: "错词汇总",
+      subtitle: `导出时间：${new Date().toLocaleString("zh-CN")}  ·  共 ${state.wrongEntries.length} 条`,
+      sections,
+    });
+  } catch (error) {
+    console.warn("错词 PDF 导出失败：", error);
+    alert(`错词 PDF 导出失败：${error?.message || "未知错误"}`);
+  }
 }
 
 function exportData() {
@@ -764,77 +1056,131 @@ async function exportCurrentFilePdf() {
     alert("请先选择一个文档。");
     return;
   }
-  if (!current.parsedCards?.length) {
-    alert("当前文档还未解析，请先点击“解析”。");
+  if (!current.rawText && !current.parsedCards?.length) {
+    alert("当前文档没有可导出的内容。");
     return;
   }
-  if (typeof window.html2pdf !== "function") {
-    alert("PDF 模块加载失败，请稍后重试。");
-    return;
-  }
-
-  const exportRoot = buildPdfExportNode(current);
-  document.body.appendChild(exportRoot);
-
   const filename = `${sanitizeFilename(current.name.replace(/\.[^.]+$/, "")) || "word-cards"}.pdf`;
+  const rawContent = current.rawText || (current.parsedCards || []).map((card) => rebuildRawText(card)).join("\n\n");
+
   try {
-    await window.html2pdf()
-      .set({
-        margin: [10, 10, 10, 10],
-        filename,
-        image: { type: "jpeg", quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
-        jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-        pagebreak: { mode: ["css", "legacy"] },
-      })
-      .from(exportRoot)
-      .save();
+    exportTextSectionsToPdf({
+      filename,
+      title: `${current.name}（原始文档文本）`,
+      subtitle: `导出时间：${new Date().toLocaleString("zh-CN")}`,
+      sections: [{ title: "文档内容", body: rawContent || "（无内容）" }],
+    });
   } catch (error) {
     console.warn("导出 PDF 失败：", error);
-    alert("PDF 导出失败，请稍后重试。");
-  } finally {
-    exportRoot.remove();
+    alert(`PDF 导出失败：${error?.message || "未知错误"}`);
   }
 }
 
-function buildPdfExportNode(file) {
-  const root = document.createElement("div");
-  root.className = "pdf-export-root";
-
-  const title = document.createElement("h1");
-  title.textContent = file.name;
-  root.appendChild(title);
-
-  const meta = document.createElement("p");
-  meta.textContent = `导出时间：${new Date().toLocaleString("zh-CN")}  ·  共 ${file.parsedCards.length} 个单词`;
-  root.appendChild(meta);
-
-  for (const card of file.parsedCards) {
-    const cardNode = document.createElement("section");
-    cardNode.className = "pdf-export-card";
-
-    const score = getCardScoreValue(card);
-    const header = document.createElement("h2");
-    header.textContent = `${card.serial || ""}. ${card.word || "未识别"}${card.phonetic ? `  /${card.phonetic}/` : ""}${score ? `  [重点 ${score}]` : ""}`;
-    cardNode.appendChild(header);
-
-    const pos = document.createElement("div");
-    pos.className = "pdf-export-pos";
-    pos.textContent = card.pos ? `词性：${normalizePos(card.pos).join(" / ")}` : "词性：待识别";
-    cardNode.appendChild(pos);
-
-    const fields = orderFields(card.fields || {});
-    for (const [label, value] of fields) {
-      const row = document.createElement("p");
-      row.className = "pdf-export-row";
-      row.textContent = `${label}：${value || "—"}`;
-      cardNode.appendChild(row);
-    }
-
-    root.appendChild(cardNode);
+function exportTextSectionsToPdf({ filename, title, subtitle, sections }) {
+  const JsPdf = window.jspdf?.jsPDF || window.jsPDF;
+  if (!JsPdf) {
+    throw new Error("PDF 引擎未加载");
   }
 
-  return root;
+  const doc = new JsPdf({ orientation: "p", unit: "mm", format: "a4" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const margin = 10;
+  const contentWidth = pageWidth - margin * 2;
+  const contentHeight = pageHeight - margin * 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 1650;
+  canvas.height = Math.floor((canvas.width * contentHeight) / contentWidth);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    throw new Error("Canvas 初始化失败");
+  }
+
+  const pad = 68;
+  const lineHeight = 36;
+  const maxX = canvas.width - pad;
+  const maxY = canvas.height - pad;
+  let y = pad;
+  let isFirstPage = true;
+  let pageHasContent = false;
+
+  const resetPage = () => {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    y = pad;
+    pageHasContent = false;
+  };
+
+  const flushPage = () => {
+    if (!pageHasContent) return;
+    const img = canvas.toDataURL("image/jpeg", 0.98);
+    if (!isFirstPage) doc.addPage();
+    doc.addImage(img, "JPEG", margin, margin, contentWidth, contentHeight, undefined, "FAST");
+    isFirstPage = false;
+    resetPage();
+  };
+
+  const drawLines = (text, font, color, blockLineHeight, spacingTop = 0, spacingBottom = 0) => {
+    if (spacingTop) y += spacingTop;
+    ctx.font = font;
+    ctx.fillStyle = color;
+    const lines = wrapTextLines(ctx, String(text || ""), maxX - pad);
+
+    for (const line of lines) {
+      if (y + blockLineHeight > maxY) {
+        flushPage();
+      }
+      ctx.font = font;
+      ctx.fillStyle = color;
+      ctx.fillText(line || " ", pad, y);
+      y += blockLineHeight;
+      pageHasContent = true;
+    }
+
+    if (spacingBottom) y += spacingBottom;
+  };
+
+  resetPage();
+  drawLines(title || "文档导出", "700 46px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#0f172a", 54, 0, 10);
+  drawLines(subtitle || "", "500 24px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#334155", 34, 0, 18);
+
+  for (const section of sections || []) {
+    drawLines(section.title || "", "700 32px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#1d4ed8", 42, 8, 6);
+    drawLines(section.body || "", "500 25px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#111827", lineHeight, 0, 18);
+  }
+
+  if (!pageHasContent && isFirstPage) {
+    pageHasContent = true;
+  }
+  flushPage();
+  doc.save(filename || "export.pdf");
+}
+
+function wrapTextLines(ctx, text, maxWidth) {
+  const source = String(text || "").replace(/\r/g, "");
+  const paragraphs = source.split("\n");
+  const lines = [];
+
+  for (const paragraph of paragraphs) {
+    if (!paragraph) {
+      lines.push("");
+      continue;
+    }
+
+    let line = "";
+    for (const char of paragraph) {
+      const testLine = line + char;
+      if (ctx.measureText(testLine).width <= maxWidth) {
+        line = testLine;
+      } else {
+        if (line) lines.push(line);
+        line = char;
+      }
+    }
+    if (line) lines.push(line);
+  }
+  return lines;
 }
 
 function sanitizeFilename(name) {

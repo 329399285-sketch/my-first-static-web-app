@@ -33,18 +33,24 @@
         <button id="downloadDataBtn" class="secondary-btn">下载数据备份</button>
       </div>
 
-      <div class="sidebar-section">
+      <div id="reviewSection" class="sidebar-section collapsible-section">
         <div class="section-title-row">
           <h2>今日应复习</h2>
-          <span id="todayReviewCount" class="muted-pill">0</span>
+          <div class="section-tools">
+            <span id="todayReviewCount" class="muted-pill">0</span>
+            <button id="toggleReviewBtn" class="section-toggle-btn" title="折叠/展开">▾</button>
+          </div>
         </div>
         <div id="todayReviewList" class="review-list"></div>
       </div>
 
-      <div class="sidebar-section">
+      <div id="fileSection" class="sidebar-section collapsible-section">
         <div class="section-title-row">
           <h2>文件列表</h2>
-          <span id="fileCount" class="muted-pill">0</span>
+          <div class="section-tools">
+            <span id="fileCount" class="muted-pill">0</span>
+            <button id="toggleFileBtn" class="section-toggle-btn" title="折叠/展开">▾</button>
+          </div>
         </div>
         <div id="fileList" class="file-list"></div>
       </div>
@@ -69,10 +75,11 @@
             <button id="themeDarkBtn" class="theme-btn" title="深色模式">深色模式</button>
           </div>
           <button id="modeStudyBtn" class="mode-btn active">学习模式</button>
+          <button id="modeChoiceBtn" class="mode-btn">记忆选词</button>
           <button id="modeQuizBtn" class="mode-btn">默写模式</button>
           <button id="syncCloudBtn" class="secondary-inline-btn">云端同步</button>
           <button id="downloadPdfBtn" class="secondary-inline-btn">下载 PDF</button>
-          <button id="downloadWrongBtn" class="secondary-inline-btn">下载错词 TXT</button>
+          <button id="downloadWrongBtn" class="secondary-inline-btn">下载错词 PDF</button>
           <button id="prevCardBtn" class="icon-btn" title="上一张">←</button>
           <button id="speakBtn" class="icon-btn speak-btn" title="朗读当前单词">🔊</button>
           <button id="nextCardBtn" class="icon-btn" title="下一张">→</button>
@@ -162,6 +169,25 @@
         <button class="judge-btn correct">正确</button>
         <button class="judge-btn wrong">错误</button>
       </div>
+    </article>
+  </template>
+
+  <template id="choiceTemplate">
+    <article class="word-card choice-card glass">
+      <div class="card-top">
+        <div class="card-serial"></div>
+      </div>
+      <div class="quiz-head">
+        <div class="quiz-badge">记忆选词</div>
+        <div class="headword-row">
+          <h3 class="headword"></h3>
+          <button class="small-speak-btn headword-audio" title="朗读">🔊</button>
+        </div>
+        <div class="phonetic"></div>
+      </div>
+      <div class="choice-prompt">请选择最符合这个单词的意思：</div>
+      <div class="choice-options"></div>
+      <div class="choice-feedback hidden"></div>
     </article>
   </template>
 
