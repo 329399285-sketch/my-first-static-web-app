@@ -2,6 +2,10 @@ const STORAGE_KEY = "word-card-studio-files-v3";
 const THEME_STORAGE_KEY = "word-card-studio-theme-v1";
 const COMPLETION_KEY = "word-card-studio-completions-v1";
 const CLOUD_API_BASE = "/api/documents";
+const PDF_ENGINE_URLS = [
+  "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
+  "https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js",
+];
 const REVIEW_INTERVALS = [0, 1, 2, 4, 7, 15, 30];
 const FIELD_ORDER = [
   "释义", "常见词义", "生僻词义", "重点程度", "谐音记忆法", "词根记忆法",
@@ -30,11 +34,11 @@ const state = {
 };
 let autoSpeakTimer = null;
 let preferredSpeechVoice = null;
+let pdfEngineLoadingPromise = null;
 
 const fileInput = document.getElementById("fileInput");
 const fileList = document.getElementById("fileList");
 const fileCount = document.getElementById("fileCount");
-const downloadDataBtn = document.getElementById("downloadDataBtn");
 const downloadWrongBtn = document.getElementById("downloadWrongBtn");
 const currentDocTitle = document.getElementById("currentDocTitle");
 const currentDocMeta = document.getElementById("currentDocMeta");
@@ -55,12 +59,14 @@ const choiceTemplate = document.getElementById("choiceTemplate");
 const modeStudyBtn = document.getElementById("modeStudyBtn");
 const modeChoiceBtn = document.getElementById("modeChoiceBtn");
 const modeQuizBtn = document.getElementById("modeQuizBtn");
+const modeWrongReviewBtn = document.getElementById("modeWrongReviewBtn");
 const reviewSection = document.getElementById("reviewSection");
 const fileSection = document.getElementById("fileSection");
 const toggleReviewBtn = document.getElementById("toggleReviewBtn");
 const toggleFileBtn = document.getElementById("toggleFileBtn");
 const syncCloudBtn = document.getElementById("syncCloudBtn");
 const downloadPdfBtn = document.getElementById("downloadPdfBtn");
+const wrongManagerBtn = document.getElementById("wrongManagerBtn");
 const cloudSyncStatus = document.getElementById("cloudSyncStatus");
 const themeLightBtn = document.getElementById("themeLightBtn");
 const themeDarkBtn = document.getElementById("themeDarkBtn");
@@ -86,7 +92,6 @@ function init() {
 
 function bindEvents() {
   fileInput.addEventListener("change", handleFilesSelected);
-  downloadDataBtn.addEventListener("click", exportData);
   downloadWrongBtn.addEventListener("click", exportWrongEntries);
   prevCardBtn.addEventListener("click", () => moveCard(-1));
   nextCardBtn.addEventListener("click", () => moveCard(1));
@@ -96,10 +101,12 @@ function bindEvents() {
   modeStudyBtn.addEventListener("click", () => switchMode("study"));
   modeChoiceBtn.addEventListener("click", () => switchMode("choice"));
   modeQuizBtn.addEventListener("click", () => switchMode("quiz"));
+  modeWrongReviewBtn?.addEventListener("click", () => switchMode("wrong-review"));
   toggleReviewBtn?.addEventListener("click", () => toggleSidebarSection("review"));
   toggleFileBtn?.addEventListener("click", () => toggleSidebarSection("file"));
   syncCloudBtn?.addEventListener("click", () => void syncFromCloud(true));
   downloadPdfBtn?.addEventListener("click", () => void exportCurrentFilePdf());
+  wrongManagerBtn?.addEventListener("click", openWrongManager);
   themeLightBtn?.addEventListener("click", () => setTheme("light"));
   themeDarkBtn?.addEventListener("click", () => setTheme("dark"));
 
@@ -520,6 +527,10 @@ function renderReviewList() {
 function renderCurrentView() {
   const current = getSelectedFile();
   updateModeButtons();
+  if (state.mode === "wrong-review") {
+    renderWrongReviewView();
+    return;
+  }
 
   if (!current) {
     emptyState.classList.remove("hidden");
@@ -541,6 +552,29 @@ function renderCurrentView() {
   }
 
   state.cards = current.parsedCards;
+  if (state.currentCardIndex >= state.cards.length) state.currentCardIndex = 0;
+  emptyState.classList.add("hidden");
+  cardsArea.classList.remove("hidden");
+  renderCard();
+}
+
+function renderWrongReviewView() {
+  const source = getWrongReviewSource();
+  const reviewCards = buildWrongReviewCards(source.entries);
+  const titlePrefix = source.fallback ? "错词复习（最近）" : "错词复习";
+
+  currentDocTitle.textContent = `${titlePrefix}（${source.dateLabel}）`;
+  if (!reviewCards.length) {
+    currentDocMeta.textContent = "前一天暂无错词记录，可先在学习/默写中累计错词。";
+    emptyState.classList.remove("hidden");
+    cardsArea.classList.add("hidden");
+    state.cards = [];
+    state.currentCardIndex = 0;
+    return;
+  }
+
+  currentDocMeta.textContent = `${source.fallback ? "最近错词" : "前一天错词"} ${reviewCards.length} 条，按错词记录关联原卡片复习`;
+  state.cards = reviewCards;
   if (state.currentCardIndex >= state.cards.length) state.currentCardIndex = 0;
   emptyState.classList.add("hidden");
   cardsArea.classList.remove("hidden");
@@ -757,6 +791,7 @@ function updateModeButtons() {
   modeStudyBtn.classList.toggle("active", state.mode === "study");
   modeChoiceBtn.classList.toggle("active", state.mode === "choice");
   modeQuizBtn.classList.toggle("active", state.mode === "quiz");
+  modeWrongReviewBtn?.classList.toggle("active", state.mode === "wrong-review");
 }
 
 function advanceQuizCard() {
@@ -914,6 +949,7 @@ function setupSpeechEngine() {
   if (!window.speechSynthesis) return;
   refreshPreferredVoice();
   window.speechSynthesis.addEventListener("voiceschanged", refreshPreferredVoice);
+  document.addEventListener("pointerdown", primeSpeechEngine, { once: true });
 }
 
 function refreshPreferredVoice() {
@@ -926,6 +962,21 @@ function refreshPreferredVoice() {
     voices.find((voice) => /^en/i.test(voice.lang)) ||
     voices[0] ||
     null;
+}
+
+function primeSpeechEngine() {
+  if (!window.speechSynthesis) return;
+  try {
+    const warm = new SpeechSynthesisUtterance(".");
+    warm.volume = 0;
+    warm.rate = 1;
+    warm.lang = preferredSpeechVoice?.lang || "en-US";
+    if (preferredSpeechVoice) warm.voice = preferredSpeechVoice;
+    window.speechSynthesis.speak(warm);
+    window.speechSynthesis.cancel();
+  } catch (error) {
+    console.warn("语音预热失败：", error);
+  }
 }
 
 function speakCurrentCard() {
@@ -983,6 +1034,11 @@ function addWrongEntry(card, skipRefresh = false) {
     serial: card.serial,
     word: card.word,
     raw: card.raw || rebuildRawText(card),
+    cardSnapshot: {
+      phonetic: card.phonetic || "",
+      pos: card.pos || "",
+      fields: card.fields || {},
+    },
     addedAt: new Date().toISOString(),
   });
   saveToStorage();
@@ -1006,6 +1062,205 @@ function getWrongCountForFile(fileId) {
   return state.wrongEntries.filter((item) => item.fileId === fileId).length;
 }
 
+function getYesterdayWrongEntries() {
+  const yesterdayStart = addDays(startOfDay(new Date()), -1);
+  const todayStart = startOfDay(new Date());
+
+  return state.wrongEntries.filter((entry) => {
+    if (!entry?.addedAt) return false;
+    const added = new Date(entry.addedAt);
+    if (Number.isNaN(added.getTime())) return false;
+    return added >= yesterdayStart && added < todayStart;
+  });
+}
+
+function getWrongReviewSource() {
+  const yesterdayEntries = getYesterdayWrongEntries();
+  if (yesterdayEntries.length) {
+    return {
+      dateLabel: formatDateOnly(addDays(new Date(), -1)),
+      fallback: false,
+      entries: yesterdayEntries,
+    };
+  }
+
+  const sorted = state.wrongEntries
+    .slice()
+    .filter((entry) => entry?.addedAt)
+    .sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+
+  if (!sorted.length) {
+    return {
+      dateLabel: formatDateOnly(addDays(new Date(), -1)),
+      fallback: false,
+      entries: [],
+    };
+  }
+
+  const first = sorted[0];
+  const targetDay = formatDateOnly(new Date(first.addedAt));
+  const entries = sorted.filter((entry) => formatDateOnly(new Date(entry.addedAt)) === targetDay);
+  return { dateLabel: targetDay, fallback: true, entries };
+}
+
+function buildWrongReviewCards(entries) {
+  return (entries || [])
+    .slice()
+    .sort((a, b) => new Date(a.addedAt) - new Date(b.addedAt))
+    .map((entry) => parseWrongEntryToCard(entry))
+    .filter(Boolean);
+}
+
+function parseWrongEntryToCard(entry) {
+  const source = findOriginalCardForWrongEntry(entry);
+  if (source) {
+    return {
+      ...source,
+      id: entry.id || source.id,
+      serial: entry.serial || source.serial,
+      word: entry.word || source.word,
+    };
+  }
+
+  if (entry?.cardSnapshot?.fields && Object.keys(entry.cardSnapshot.fields).length) {
+    return {
+      id: entry.id,
+      fileId: entry.fileId || "wrong-review",
+      serial: entry.serial || "",
+      word: entry.word || "未识别单词",
+      phonetic: entry.cardSnapshot.phonetic || "",
+      pos: entry.cardSnapshot.pos || "",
+      fields: entry.cardSnapshot.fields || {},
+      raw: entry.raw || "",
+    };
+  }
+
+  const parsed = parseWordChunk(String(entry.raw || "").trim(), entry.fileId || "wrong-review");
+  if (parsed?.word) {
+    parsed.id = entry.id;
+    parsed.serial = entry.serial || parsed.serial;
+    return parsed;
+  }
+
+  return {
+    id: entry.id,
+    fileId: entry.fileId || "wrong-review",
+    serial: entry.serial || "",
+    word: entry.word || "未识别单词",
+    phonetic: "",
+    pos: "",
+    fields: {
+      "释义": extractMeaningFromRaw(entry.raw || ""),
+      "补充内容": String(entry.raw || "").trim(),
+    },
+    raw: entry.raw || "",
+  };
+}
+
+function findOriginalCardForWrongEntry(entry) {
+  const sourceFile = state.files.find((file) => file.id === entry.fileId);
+  if (!sourceFile?.parsedCards?.length) return null;
+
+  return sourceFile.parsedCards.find((card) =>
+    card.id === entry.id ||
+    (
+      String(card.serial || "") === String(entry.serial || "") &&
+      String(card.word || "").toLowerCase() === String(entry.word || "").toLowerCase()
+    )
+  ) || null;
+}
+
+function extractMeaningFromRaw(rawText) {
+  const text = String(rawText || "");
+  const matched = text.match(/\[释义\]\s*[：:]\s*([^\n]+)/);
+  if (matched?.[1]) return matched[1].trim();
+  return "请参考完整条目";
+}
+
+function openWrongManager() {
+  const existing = document.getElementById("wrongManagerOverlay");
+  if (existing) existing.remove();
+
+  const overlay = document.createElement("div");
+  overlay.id = "wrongManagerOverlay";
+  overlay.className = "wrong-manager-overlay";
+  overlay.innerHTML = `
+    <div class="wrong-manager-panel">
+      <div class="wrong-manager-header">
+        <h3>错词管理</h3>
+        <button class="wrong-manager-close" type="button">关闭</button>
+      </div>
+      <div class="wrong-manager-toolbar">
+        <button class="wrong-manager-btn" data-action="select-all" type="button">全选</button>
+        <button class="wrong-manager-btn" data-action="unselect-all" type="button">清空选择</button>
+        <button class="wrong-manager-btn danger" data-action="delete-selected" type="button">删除选中</button>
+      </div>
+      <div class="wrong-manager-list"></div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  const listEl = overlay.querySelector(".wrong-manager-list");
+  renderWrongManagerList(listEl);
+
+  overlay.querySelector(".wrong-manager-close")?.addEventListener("click", () => overlay.remove());
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) overlay.remove();
+  });
+
+  overlay.querySelector('[data-action="select-all"]')?.addEventListener("click", () => {
+    listEl.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = true; });
+  });
+
+  overlay.querySelector('[data-action="unselect-all"]')?.addEventListener("click", () => {
+    listEl.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false; });
+  });
+
+  overlay.querySelector('[data-action="delete-selected"]')?.addEventListener("click", () => {
+    const selectedIds = Array.from(listEl.querySelectorAll('input[type="checkbox"]:checked'))
+      .map((input) => input.value)
+      .filter(Boolean);
+
+    if (!selectedIds.length) {
+      alert("请先勾选要删除的错词。");
+      return;
+    }
+
+    const selectedSet = new Set(selectedIds);
+    state.wrongEntries = state.wrongEntries.filter((entry) => !selectedSet.has(entry.id));
+    saveToStorage();
+    renderWrongManagerList(listEl);
+    renderCurrentView();
+  });
+}
+
+function renderWrongManagerList(listEl) {
+  if (!listEl) return;
+  listEl.innerHTML = "";
+
+  if (!state.wrongEntries.length) {
+    const empty = document.createElement("div");
+    empty.className = "wrong-manager-empty";
+    empty.textContent = "当前没有错词。";
+    listEl.appendChild(empty);
+    return;
+  }
+
+  const items = state.wrongEntries.slice().sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt));
+  for (const item of items) {
+    const row = document.createElement("label");
+    row.className = "wrong-manager-row";
+    row.innerHTML = `
+      <input type="checkbox" value="${escapeHtml(item.id)}" />
+      <div class="wrong-manager-meta">
+        <div class="wrong-manager-word">${escapeHtml(item.word || "未识别")}</div>
+        <div class="wrong-manager-sub">${escapeHtml(item.fileName || "未知文件")} · 序号 ${escapeHtml(item.serial || "-")} · ${escapeHtml(formatDateTime(item.addedAt || new Date().toISOString()))}</div>
+      </div>
+    `;
+    listEl.appendChild(row);
+  }
+}
+
 async function exportWrongEntries() {
   if (!state.wrongEntries.length) {
     alert("当前还没有错词记录。");
@@ -1015,14 +1270,21 @@ async function exportWrongEntries() {
   const sections = [];
   for (const [fileName, items] of Object.entries(grouped)) {
     items.sort((a, b) => Number(a.serial || 0) - Number(b.serial || 0));
-    const bodyParts = items.map((item) => `${item.serial || "-"} · ${item.word || "未识别"}\n${item.raw || ""}`);
-    sections.push({
-      title: fileName || "未命名文档",
-      body: bodyParts.join("\n\n========================================\n\n"),
-    });
+    for (const item of items) {
+      const card = parseWrongEntryToCard(item);
+      sections.push({
+        title: `${fileName || "未命名文档"} · ${formatCardHeaderForPdf(card)}`,
+        body: formatCardBodyForPdf(card),
+      });
+    }
   }
 
   try {
+    const ready = await ensurePdfEngineLoaded();
+    if (!ready) {
+      alert("PDF 引擎未加载，请检查网络后重试。");
+      return;
+    }
     exportTextSectionsToPdf({
       filename: `错词汇总_${formatDateOnly(new Date())}.pdf`,
       title: "错词汇总",
@@ -1061,19 +1323,44 @@ async function exportCurrentFilePdf() {
     return;
   }
   const filename = `${sanitizeFilename(current.name.replace(/\.[^.]+$/, "")) || "word-cards"}.pdf`;
-  const rawContent = current.rawText || (current.parsedCards || []).map((card) => rebuildRawText(card)).join("\n\n");
+  const parsedCards = current.parsedCards?.length ? current.parsedCards : parseVocabularyText(current.rawText || "", current.id);
+  const dateLabel = extractDateFromName(current.name) || formatDateOnly(new Date());
+  const sections = parsedCards.length
+    ? parsedCards.map((card) => ({
+      title: formatCardHeaderForPdf(card),
+      body: formatCardBodyForPdf(card),
+    }))
+    : [{ title: "文档内容", body: current.rawText || "（无内容）" }];
 
   try {
+    const ready = await ensurePdfEngineLoaded();
+    if (!ready) {
+      alert("PDF 引擎未加载，请检查网络后重试。");
+      return;
+    }
     exportTextSectionsToPdf({
       filename,
-      title: `${current.name}（原始文档文本）`,
+      title: `单词复习清单 - ${dateLabel}`,
       subtitle: `导出时间：${new Date().toLocaleString("zh-CN")}`,
-      sections: [{ title: "文档内容", body: rawContent || "（无内容）" }],
+      sections,
     });
   } catch (error) {
     console.warn("导出 PDF 失败：", error);
     alert(`PDF 导出失败：${error?.message || "未知错误"}`);
   }
+}
+
+function formatCardHeaderForPdf(card) {
+  if (!card) return "";
+  const pos = card.pos ? normalizePos(card.pos).join("、") : "";
+  return `${card.serial || "-"}: ${card.word || "未识别"}${card.phonetic ? ` /${card.phonetic}/` : ""}${pos ? ` [${pos}]` : ""}`;
+}
+
+function formatCardBodyForPdf(card) {
+  if (!card) return "（空）";
+  const fields = orderFields(card.fields || {});
+  const bodyLines = fields.map(([label, value]) => `[${label}]：${value || "—"}`);
+  return bodyLines.length ? bodyLines.join("\n") : "（无字段内容）";
 }
 
 function exportTextSectionsToPdf({ filename, title, subtitle, sections }) {
@@ -1155,6 +1442,55 @@ function exportTextSectionsToPdf({ filename, title, subtitle, sections }) {
   }
   flushPage();
   doc.save(filename || "export.pdf");
+}
+
+async function ensurePdfEngineLoaded() {
+  if (window.jspdf?.jsPDF || window.jsPDF) return true;
+
+  if (!pdfEngineLoadingPromise) {
+    pdfEngineLoadingPromise = (async () => {
+      for (const url of PDF_ENGINE_URLS) {
+        try {
+          await loadScriptOnce(url);
+          if (window.jspdf?.jsPDF || window.jsPDF) return true;
+        } catch (error) {
+          console.warn(`加载 PDF 引擎失败：${url}`, error);
+        }
+      }
+      return Boolean(window.jspdf?.jsPDF || window.jsPDF);
+    })();
+  }
+
+  const loaded = await pdfEngineLoadingPromise;
+  if (!loaded) {
+    pdfEngineLoadingPromise = null;
+  }
+  return loaded;
+}
+
+function loadScriptOnce(url) {
+  return new Promise((resolve, reject) => {
+    const existing = Array.from(document.querySelectorAll("script")).find((item) => item.src === url);
+    if (existing && existing.dataset.loaded === "1") {
+      resolve();
+      return;
+    }
+
+    const script = existing || document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.dataset.dynamic = "1";
+
+    script.onload = () => {
+      script.dataset.loaded = "1";
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`script_load_failed: ${url}`));
+
+    if (!existing) {
+      document.head.appendChild(script);
+    }
+  });
 }
 
 function wrapTextLines(ctx, text, maxWidth) {
@@ -1350,6 +1686,12 @@ function extractDateFromName(name = "") {
 function parseDate(dateString) {
   const [year, month, day] = dateString.split("-").map(Number);
   return new Date(year, month - 1, day);
+}
+
+function addDays(date, deltaDays) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + deltaDays);
+  return next;
 }
 
 function startOfDay(date) {
