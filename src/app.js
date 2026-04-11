@@ -875,7 +875,7 @@ function formatCloudErrorStatus(fallback) {
     return "云端：未配置存储连接串 AZURE_STORAGE_CONNECTION_STRING";
   }
   if (/unauthorized|401/i.test(message)) {
-    return "云端：鉴权失败（API 未读取到 Token），请重新部署后刷新页面";
+    return "云端：鉴权失败，请检查 AUTH_SESSION_DAYS 是否为 0/空值，并重新部署";
   }
   if (/forbidden|403/i.test(message)) {
     return "云端：无权限访问，请确认当前账号为管理员";

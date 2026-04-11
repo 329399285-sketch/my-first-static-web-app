@@ -30,7 +30,7 @@
 - `AZURE_STORAGE_CONNECTION_STRING`：Azure Storage 连接串（必填）
 - `DOCS_CONTAINER_NAME`：文档容器名（可选，默认 `word-card-documents`）
 - `AUTH_CONTAINER_NAME`：账号容器名（可选，默认 `word-card-auth`）
-- `AUTH_SESSION_DAYS`：登录态有效天数（可选，默认 `30`）
+- `AUTH_SESSION_DAYS`：登录态有效天数（可选，默认 `30`，必须大于 `0`）
 - `ADMIN_USERNAMES`：管理员用户名列表（可选，逗号分隔，默认包含 `xiaoyang`）
 - `DEFAULT_ADMIN_USERNAME`：默认管理员用户名（可选，默认 `xiaoyang`）
 - `DEFAULT_ADMIN_PASSWORD`：默认管理员密码（可选，默认 `000823`）

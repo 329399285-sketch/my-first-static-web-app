@@ -2,7 +2,7 @@
 const { getContainerClient, safeSegment, readJson, writeJson, deleteBlob, listBlobNames } = require("./storage");
 
 const AUTH_CONTAINER = process.env.AUTH_CONTAINER_NAME || "word-card-auth";
-const SESSION_DAYS = Number(process.env.AUTH_SESSION_DAYS || 30);
+const SESSION_DAYS = normalizeSessionDays(process.env.AUTH_SESSION_DAYS, 30);
 const SESSION_TOUCH_INTERVAL_MS = 60 * 1000;
 const ONLINE_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_ADMIN_USERNAME = normalizeUsername(process.env.DEFAULT_ADMIN_USERNAME || "xiaoyang");
@@ -11,6 +11,12 @@ const ADMIN_USERNAMES = parseAdminUsernames(process.env.ADMIN_USERNAMES || DEFAU
 
 async function getAuthContainer() {
   return getContainerClient(AUTH_CONTAINER);
+}
+
+function normalizeSessionDays(input, fallback = 30) {
+  const value = Number(input);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return Math.max(1, Math.floor(value));
 }
 
 function normalizeUsername(username) {
