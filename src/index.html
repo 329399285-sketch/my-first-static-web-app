@@ -146,7 +146,15 @@
             <h3>用户管理</h3>
             <p>管理员模式：重点管理用户空间、在线状态与文档同步。</p>
           </div>
-          <button id="adminConsoleRefreshBtn" class="secondary-inline-btn" type="button">刷新用户状态</button>
+          <div class="admin-console-actions">
+            <button id="adminConsoleRefreshBtn" class="secondary-inline-btn" type="button">刷新用户状态</button>
+            <button id="adminSyncCurrentBtn" class="secondary-inline-btn" type="button">同步当前空间</button>
+          </div>
+        </div>
+        <div id="adminSummaryGrid" class="admin-summary-grid"></div>
+        <div class="admin-users-headline">
+          <h4>账号同步详情</h4>
+          <p>查看每个账号的在线状态、在线时长、会话数量与文档同步数据。</p>
         </div>
         <div id="adminUsersList" class="admin-users-list"></div>
       </section>

@@ -1,5 +1,5 @@
 ﻿const { resolveAuth, listUsers } = require("../lib/auth");
-const { json, getContainerClient, listBlobNames, safeSegment } = require("../lib/storage");
+const { json, getContainerClient, listBlobNames, safeSegment, readJson } = require("../lib/storage");
 
 const DOCS_CONTAINER_NAME = process.env.DOCS_CONTAINER_NAME || "word-card-documents";
 
@@ -24,7 +24,7 @@ module.exports = async function (context, req) {
       return;
     }
 
-    const users = await attachDocumentCount(result.users, context);
+    const users = await attachDocumentSummary(result.users, context);
     context.res = json(200, { ok: true, users });
   } catch (error) {
     context.log.error("users api failed", error);
@@ -32,31 +32,82 @@ module.exports = async function (context, req) {
   }
 };
 
-async function attachDocumentCount(users, context) {
+async function attachDocumentSummary(users, context) {
   const list = Array.isArray(users) ? users : [];
   if (!list.length) return [];
 
   try {
     const container = await getContainerClient(DOCS_CONTAINER_NAME);
     const names = await listBlobNames(container, "");
-    const counter = new Map();
+    const summary = new Map();
 
     for (const name of names) {
       if (!String(name).endsWith(".json")) continue;
       const ownerPrefix = String(name).split("/")[0] || "";
       if (!ownerPrefix) continue;
-      counter.set(ownerPrefix, (counter.get(ownerPrefix) || 0) + 1);
+
+      const meta = summary.get(ownerPrefix) || {
+        documentCount: 0,
+        parsedDocumentCount: 0,
+        totalCardCount: 0,
+        totalDocSize: 0,
+        lastDocumentUpdatedAt: null,
+      };
+
+      meta.documentCount += 1;
+      const document = await readJson(container, name, null);
+      if (document) {
+        const size = Number(document.size || 0);
+        if (Number.isFinite(size) && size > 0) {
+          meta.totalDocSize += size;
+        }
+
+        const parsedCards = Array.isArray(document.parsedCards) ? document.parsedCards : [];
+        if (parsedCards.length) {
+          meta.parsedDocumentCount += 1;
+          meta.totalCardCount += parsedCards.length;
+        }
+
+        const updatedAt = document.updatedAt || document.parsedAt || document.createdAt || null;
+        if (updatedAt) {
+          const updatedMs = new Date(updatedAt).getTime();
+          const prevMs = meta.lastDocumentUpdatedAt ? new Date(meta.lastDocumentUpdatedAt).getTime() : NaN;
+          if (!Number.isFinite(prevMs) || (Number.isFinite(updatedMs) && updatedMs > prevMs)) {
+            meta.lastDocumentUpdatedAt = updatedAt;
+          }
+        }
+      }
+
+      summary.set(ownerPrefix, meta);
     }
 
     return list.map((user) => {
       const key = safeSegment(user?.id || "");
+      const meta = summary.get(key) || {
+        documentCount: 0,
+        parsedDocumentCount: 0,
+        totalCardCount: 0,
+        totalDocSize: 0,
+        lastDocumentUpdatedAt: null,
+      };
       return {
         ...user,
-        documentCount: counter.get(key) || 0,
+        documentCount: meta.documentCount,
+        parsedDocumentCount: meta.parsedDocumentCount,
+        totalCardCount: meta.totalCardCount,
+        totalDocSize: meta.totalDocSize,
+        lastDocumentUpdatedAt: meta.lastDocumentUpdatedAt,
       };
     });
   } catch (error) {
-    context.log.warn("attach document count failed", error);
-    return list.map((user) => ({ ...user, documentCount: null }));
+    context.log.warn("attach document summary failed", error);
+    return list.map((user) => ({
+      ...user,
+      documentCount: null,
+      parsedDocumentCount: null,
+      totalCardCount: null,
+      totalDocSize: null,
+      lastDocumentUpdatedAt: null,
+    }));
   }
 }

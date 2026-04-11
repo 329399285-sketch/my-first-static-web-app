@@ -533,7 +533,12 @@ body.admin-mode #reviewSection {
   display: none;
 }
 
-body.admin-mode .topbar-actions .action-group:first-child {
+body.admin-mode #cardsArea,
+body.admin-mode #emptyState {
+  display: none !important;
+}
+
+body.admin-mode .topbar-actions .action-group {
   display: none;
 }
 
@@ -619,9 +624,9 @@ body.admin-mode .topbar-actions .action-group:first-child {
 
 .admin-console {
   border-radius: 18px;
-  padding: 12px;
+  padding: 14px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .admin-console-head {
@@ -643,21 +648,68 @@ body.admin-mode .topbar-actions .action-group:first-child {
   font-size: 0.78rem;
 }
 
-.admin-users-list {
+.admin-console-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-summary-grid {
   display: grid;
   gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.admin-metric-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-strong) 94%, transparent);
+  padding: 10px 12px;
+}
+
+.admin-metric-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.admin-metric-value {
+  margin-top: 4px;
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.admin-metric-hint {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+
+.admin-users-headline h4 {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.admin-users-headline p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.admin-users-list {
+  display: grid;
+  gap: 10px;
 }
 
 .admin-user-row {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
-  padding: 9px 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
 }
 
 .admin-user-row.active {
@@ -665,8 +717,20 @@ body.admin-mode .topbar-actions .action-group:first-child {
   background: color-mix(in srgb, var(--accent-soft) 64%, transparent);
 }
 
-.admin-user-main {
+.admin-user-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-user-name-wrap {
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .admin-user-name {
@@ -676,11 +740,69 @@ body.admin-mode .topbar-actions .action-group:first-child {
   word-break: break-word;
 }
 
-.admin-user-meta {
-  margin-top: 2px;
+.admin-user-chip {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.68rem;
   color: var(--muted);
-  font-size: 0.72rem;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  line-height: 1.5;
+}
+
+.admin-user-chip.online {
+  color: color-mix(in srgb, var(--success) 82%, #0f172a);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 10%, var(--panel));
+}
+
+.admin-user-chip.offline {
+  color: color-mix(in srgb, var(--muted) 85%, #0f172a);
+}
+
+.admin-user-duration {
+  color: var(--muted);
+  font-size: 0.73rem;
+  font-weight: 700;
+}
+
+.admin-user-stats {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.admin-stat-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 8px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  display: grid;
+  gap: 2px;
+}
+
+.admin-stat-item span {
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.admin-stat-item strong {
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
+.admin-stat-item em {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
   line-height: 1.3;
+}
+
+.admin-user-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .admin-switch-btn[disabled] {

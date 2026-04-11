@@ -101,8 +101,10 @@ const adminWorkspacePanel = document.getElementById("adminWorkspacePanel");
 const workspaceUserSelect = document.getElementById("workspaceUserSelect");
 const refreshUsersBtn = document.getElementById("refreshUsersBtn");
 const adminConsole = document.getElementById("adminConsole");
+const adminSummaryGrid = document.getElementById("adminSummaryGrid");
 const adminUsersList = document.getElementById("adminUsersList");
 const adminConsoleRefreshBtn = document.getElementById("adminConsoleRefreshBtn");
+const adminSyncCurrentBtn = document.getElementById("adminSyncCurrentBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 
 init();
@@ -146,14 +148,10 @@ function bindEvents() {
   logoutBtn?.addEventListener("click", handleLogoutClick);
   refreshUsersBtn?.addEventListener("click", () => void loadWorkspaceUsers(true));
   adminConsoleRefreshBtn?.addEventListener("click", () => void loadWorkspaceUsers(true));
+  adminSyncCurrentBtn?.addEventListener("click", () => void syncCurrentWorkspaceUser());
   workspaceUserSelect?.addEventListener("change", () => {
-    state.workspaceUserId = workspaceUserSelect.value || state.currentUser?.id || "";
-    loadFromStorage();
-    updateSessionUI();
-    renderFileList();
-    renderReviewList();
-    renderCurrentView();
-    void syncFromCloud(true);
+    const userId = workspaceUserSelect.value || state.currentUser?.id || "";
+    void switchWorkspaceUser(userId, { sync: true });
   });
   themeLightBtn?.addEventListener("click", () => setTheme("light"));
   themeDarkBtn?.addEventListener("click", () => setTheme("dark"));
@@ -334,6 +332,7 @@ function updateSessionUI() {
   if (!user) {
     authSessionBar?.classList.add("hidden");
     adminWorkspacePanel?.classList.add("hidden");
+    renderAdminSummary();
     renderAdminUsersList();
     applyRoleLayout();
     return;
@@ -352,6 +351,7 @@ function updateSessionUI() {
     adminWorkspacePanel?.classList.add("hidden");
   }
 
+  renderAdminSummary();
   renderAdminUsersList();
   applyRoleLayout();
 }
@@ -365,8 +365,12 @@ function applyRoleLayout() {
   document.body.classList.toggle("admin-mode", adminMode);
   adminConsole?.classList.toggle("hidden", !adminMode);
 
-  if (adminMode && state.mode !== "study") {
-    state.mode = "study";
+  if (adminMode) {
+    if (state.mode !== "study") {
+      state.mode = "study";
+    }
+    cardsArea?.classList.add("hidden");
+    emptyState?.classList.add("hidden");
   }
 }
 
@@ -392,6 +396,14 @@ async function loadWorkspaceUsers(showStatus = false) {
       role: state.currentUser.role,
       online: true,
       documentCount: state.files.length,
+      parsedDocumentCount: Number(state.files.filter((item) => Array.isArray(item.parsedCards) && item.parsedCards.length).length),
+      totalCardCount: Number(state.files.reduce((sum, item) => sum + (Array.isArray(item.parsedCards) ? item.parsedCards.length : 0), 0)),
+      totalDocSize: Number(state.files.reduce((sum, item) => sum + Number(item.size || 0), 0)),
+      lastDocumentUpdatedAt: state.files[0]?.updatedAt || state.files[0]?.parsedAt || null,
+      activeSessionCount: 1,
+      onlineSessionCount: 1,
+      onlineSinceAt: new Date().toISOString(),
+      onlineDurationSeconds: 0,
       lastSeenAt: new Date().toISOString(),
     }];
     state.workspaceUserId = state.currentUser.id;
@@ -410,6 +422,14 @@ async function loadWorkspaceUsers(showStatus = false) {
       role: state.currentUser.role,
       online: true,
       documentCount: null,
+      parsedDocumentCount: null,
+      totalCardCount: null,
+      totalDocSize: null,
+      lastDocumentUpdatedAt: null,
+      activeSessionCount: 1,
+      onlineSessionCount: 1,
+      onlineSinceAt: null,
+      onlineDurationSeconds: 0,
       lastSeenAt: null,
     }];
     if (!state.workspaceUserId) {
@@ -422,7 +442,17 @@ async function loadWorkspaceUsers(showStatus = false) {
     return;
   }
 
-  state.workspaceUsers = Array.isArray(response.users) ? response.users : [];
+  state.workspaceUsers = Array.isArray(response.users)
+    ? response.users.map((item) => ({
+      ...item,
+      online: Boolean(item?.online),
+      activeSessionCount: Number(item?.activeSessionCount || 0),
+      onlineSessionCount: Number(item?.onlineSessionCount || 0),
+      onlineDurationSeconds: Number(item?.onlineDurationSeconds || 0),
+      onlineSinceAt: item?.onlineSinceAt || null,
+      lastSeenAt: item?.lastSeenAt || null,
+    }))
+    : [];
   state.lastCloudError = "";
   if (!state.workspaceUsers.some((item) => item.id === state.workspaceUserId)) {
     state.workspaceUserId = state.workspaceUsers[0]?.id || state.currentUser.id;
@@ -2312,4 +2342,261 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function formatDurationShort(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+
+  if (days > 0) return `${days}天${hours}小时`;
+  if (hours > 0) return `${hours}小时${minutes}分`;
+  if (minutes > 0) return `${minutes}分钟`;
+  return `${total}秒`;
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return "暂无记录";
+  const target = new Date(iso).getTime();
+  if (!Number.isFinite(target)) return "暂无记录";
+
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - target) / 1000));
+  if (diffSeconds < 60) return `${diffSeconds}秒前`;
+
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}分钟前`;
+
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}小时前`;
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}天前`;
+}
+
+function renderWorkspaceSelect() {
+  if (!workspaceUserSelect) return;
+  workspaceUserSelect.innerHTML = "";
+  for (const user of state.workspaceUsers) {
+    const option = document.createElement("option");
+    option.value = user.id;
+    const roleText = user.role === "admin" ? "管理员" : "用户";
+    const onlineText = user.online ? "在线" : "离线";
+    const countText = Number.isFinite(user.documentCount) ? `文档 ${user.documentCount}` : "文档 -";
+    const sessionText = Number.isFinite(user.activeSessionCount) ? `会话 ${user.activeSessionCount}` : "会话 -";
+    option.textContent = `${user.username}（${roleText}·${onlineText}·${countText}·${sessionText}）`;
+    workspaceUserSelect.appendChild(option);
+  }
+  workspaceUserSelect.value = state.workspaceUserId || state.currentUser?.id || "";
+}
+
+function renderAdminSummary() {
+  if (!adminSummaryGrid) return;
+  if (!isAdminUser()) {
+    adminSummaryGrid.innerHTML = "";
+    return;
+  }
+
+  const users = Array.isArray(state.workspaceUsers) ? state.workspaceUsers : [];
+  if (!users.length) {
+    adminSummaryGrid.innerHTML = `<div class="admin-metric-card"><div class="admin-metric-label">状态</div><div class="admin-metric-value">暂无数据</div></div>`;
+    return;
+  }
+
+  const totalUsers = users.length;
+  const onlineUsers = users.filter((user) => user.online).length;
+  const totalSessions = users.reduce((sum, user) => sum + (Number(user.activeSessionCount) || 0), 0);
+  const totalDocs = users.reduce((sum, user) => sum + (Number(user.documentCount) || 0), 0);
+  const parsedDocs = users.reduce((sum, user) => sum + (Number(user.parsedDocumentCount) || 0), 0);
+  const totalCards = users.reduce((sum, user) => sum + (Number(user.totalCardCount) || 0), 0);
+  const totalDocSize = users.reduce((sum, user) => sum + (Number(user.totalDocSize) || 0), 0);
+  const onlineDurationSeconds = users.reduce((sum, user) => sum + (user.online ? (Number(user.onlineDurationSeconds) || 0) : 0), 0);
+  const totalOnlineSessions = users.reduce((sum, user) => sum + (Number(user.onlineSessionCount) || 0), 0);
+
+  const metrics = [
+    { label: "账号", value: String(totalUsers), hint: `在线 ${onlineUsers}` },
+    { label: "会话", value: String(totalSessions), hint: `在线会话 ${totalOnlineSessions}` },
+    { label: "文档", value: String(totalDocs), hint: `已解析 ${parsedDocs}` },
+    { label: "单词卡", value: String(totalCards), hint: "来自已解析文档" },
+    { label: "云端容量", value: formatSize(totalDocSize), hint: "文档累计大小" },
+    { label: "在线时长", value: formatDurationShort(onlineDurationSeconds), hint: "当前在线账号累计" },
+  ];
+
+  adminSummaryGrid.innerHTML = metrics
+    .map((item) => `
+      <div class="admin-metric-card">
+        <div class="admin-metric-label">${escapeHtml(item.label)}</div>
+        <div class="admin-metric-value">${escapeHtml(item.value)}</div>
+        <div class="admin-metric-hint">${escapeHtml(item.hint)}</div>
+      </div>
+    `)
+    .join("");
+}
+
+function renderAdminUsersList() {
+  if (!adminUsersList) return;
+  if (!isAdminUser()) {
+    adminUsersList.innerHTML = "";
+    renderAdminSummary();
+    return;
+  }
+
+  renderAdminSummary();
+  const users = Array.isArray(state.workspaceUsers) ? state.workspaceUsers : [];
+  if (!users.length) {
+    adminUsersList.innerHTML = `<div class="admin-user-empty">暂无用户数据，点击“刷新用户状态”重试。</div>`;
+    return;
+  }
+
+  const rows = users.map((user) => {
+    const active = user.id === state.workspaceUserId;
+    const roleText = user.role === "admin" ? "管理员" : "用户";
+    const onlineText = user.online ? "在线" : "离线";
+    const onlineStatusClass = user.online ? "online" : "offline";
+    const docCount = Number.isFinite(user.documentCount) ? `${user.documentCount}` : "-";
+    const parsedDocCount = Number.isFinite(user.parsedDocumentCount) ? `${user.parsedDocumentCount}` : "-";
+    const cardCount = Number.isFinite(user.totalCardCount) ? `${user.totalCardCount}` : "-";
+    const docSize = Number.isFinite(user.totalDocSize) ? formatSize(user.totalDocSize) : "-";
+    const lastSeen = user.lastSeenAt ? formatDateTime(user.lastSeenAt) : "暂无";
+    const lastDocumentUpdatedAt = user.lastDocumentUpdatedAt ? formatDateTime(user.lastDocumentUpdatedAt) : "暂无";
+    const activeSessions = Number(user.activeSessionCount || 0);
+    const onlineSessions = Number(user.onlineSessionCount || 0);
+    const onlineDuration = user.online
+      ? `在线 ${formatDurationShort(user.onlineDurationSeconds)}`
+      : `离线 ${formatRelativeTime(user.lastSeenAt)}`;
+
+    return `
+      <div class="admin-user-row ${active ? "active" : ""}">
+        <div class="admin-user-top">
+          <div class="admin-user-name-wrap">
+            <div class="admin-user-name">${escapeHtml(user.username || "未知用户")}</div>
+            <span class="admin-user-chip">${escapeHtml(roleText)}</span>
+            <span class="admin-user-chip ${onlineStatusClass}">${escapeHtml(onlineText)}</span>
+          </div>
+          <div class="admin-user-duration">${escapeHtml(onlineDuration)}</div>
+        </div>
+
+        <div class="admin-user-stats">
+          <div class="admin-stat-item"><span>会话</span><strong>${activeSessions}</strong><em>在线 ${onlineSessions}</em></div>
+          <div class="admin-stat-item"><span>文档</span><strong>${docCount}</strong><em>已解析 ${parsedDocCount}</em></div>
+          <div class="admin-stat-item"><span>单词卡</span><strong>${cardCount}</strong><em>最近活跃 ${escapeHtml(lastSeen)}</em></div>
+          <div class="admin-stat-item"><span>云端大小</span><strong>${escapeHtml(docSize)}</strong><em>最近文档更新 ${escapeHtml(lastDocumentUpdatedAt)}</em></div>
+        </div>
+
+        <div class="admin-user-actions">
+          <button class="secondary-inline-btn admin-switch-btn" data-user-id="${escapeHtml(user.id || "")}" ${active ? "disabled" : ""}>
+            ${active ? "当前空间" : "切换空间"}
+          </button>
+          <button class="secondary-inline-btn admin-sync-btn" data-user-id="${escapeHtml(user.id || "")}">同步该用户</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  adminUsersList.innerHTML = rows;
+  adminUsersList.querySelectorAll(".admin-switch-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.getAttribute("data-user-id") || "";
+      if (!userId || userId === state.workspaceUserId) return;
+      void switchWorkspaceUser(userId, { sync: false });
+    });
+  });
+
+  adminUsersList.querySelectorAll(".admin-sync-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.getAttribute("data-user-id") || "";
+      if (!userId) return;
+      void switchWorkspaceUser(userId, { sync: true });
+    });
+  });
+}
+
+async function syncCurrentWorkspaceUser() {
+  const targetUserId = state.workspaceUserId || state.currentUser?.id || "";
+  if (!targetUserId) return;
+  await switchWorkspaceUser(targetUserId, { sync: true });
+}
+
+async function switchWorkspaceUser(userId, options = {}) {
+  const sync = options.sync !== false;
+  const targetUserId = String(userId || "").trim() || state.currentUser?.id || "";
+  if (!targetUserId) return;
+
+  const changed = targetUserId !== state.workspaceUserId;
+  state.workspaceUserId = targetUserId;
+  if (workspaceUserSelect) {
+    workspaceUserSelect.value = targetUserId;
+  }
+
+  if (changed) {
+    loadFromStorage();
+    renderFileList();
+    renderReviewList();
+  }
+
+  updateSessionUI();
+  renderCurrentView();
+
+  if (sync) {
+    await syncFromCloud(true);
+  }
+}
+
+function renderCurrentView() {
+  const current = getSelectedFile();
+
+  if (isAdminUser()) {
+    state.mode = "study";
+  }
+  updateModeButtons();
+
+  if (isAdminUser()) {
+    const target = state.workspaceUsers.find((item) => item.id === state.workspaceUserId) || null;
+    const workspaceName = target?.username || state.currentUser?.username || "未选择";
+    const onlineText = target?.online ? "在线" : "离线";
+    const docCount = Number.isFinite(target?.documentCount) ? target.documentCount : "-";
+    const parsedCount = Number.isFinite(target?.parsedDocumentCount) ? target.parsedDocumentCount : "-";
+    const lastDocumentUpdatedAt = target?.lastDocumentUpdatedAt ? formatDateTime(target.lastDocumentUpdatedAt) : "暂无";
+
+    currentDocTitle.textContent = `同步管理中心 · ${workspaceName}`;
+    currentDocMeta.textContent = `当前空间：${workspaceName}（${onlineText}）· 文档 ${docCount} · 已解析 ${parsedCount} · 最近文档更新 ${lastDocumentUpdatedAt}`;
+
+    emptyState.classList.add("hidden");
+    cardsArea.classList.add("hidden");
+    state.cards = [];
+    state.currentCardIndex = 0;
+    return;
+  }
+
+  if (state.mode === "wrong-review") {
+    renderWrongReviewView();
+    return;
+  }
+
+  if (!current) {
+    emptyState.classList.remove("hidden");
+    cardsArea.classList.add("hidden");
+    currentDocTitle.textContent = "请选择左侧文件并点击“解析”";
+    currentDocMeta.textContent = "解析后会在这里显示单词卡片，可左右切换、朗读和默写。";
+    setEmptyStateCopy(DEFAULT_EMPTY_TITLE, DEFAULT_EMPTY_DESC);
+    return;
+  }
+
+  currentDocTitle.textContent = current.name;
+  currentDocMeta.textContent = current.parsedAt
+    ? `最近解析：${formatDateTime(current.parsedAt)}，共 ${current.parsedCards.length} 张卡片，错词 ${getWrongCountForFile(current.id)} 条`
+    : "尚未解析，点击左侧“解析”按钮开始。";
+
+  if (!current.parsedCards?.length) {
+    emptyState.classList.remove("hidden");
+    cardsArea.classList.add("hidden");
+    setEmptyStateCopy(DEFAULT_EMPTY_TITLE, DEFAULT_EMPTY_DESC);
+    return;
+  }
+
+  state.cards = current.parsedCards;
+  if (state.currentCardIndex >= state.cards.length) state.currentCardIndex = 0;
+  emptyState.classList.add("hidden");
+  cardsArea.classList.remove("hidden");
+  renderCard();
 }

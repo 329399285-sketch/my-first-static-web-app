@@ -245,7 +245,8 @@ async function listUsers(requester) {
     if (!user) continue;
 
     const username = normalizeUsername(user.username);
-    const lastSeenAt = activeMap.get(username) || null;
+    const sessionMeta = activeMap.get(username) || null;
+    const lastSeenAt = sessionMeta?.lastSeenAt || null;
     const lastSeenMs = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
     const online = Number.isFinite(lastSeenMs) && now - lastSeenMs <= ONLINE_WINDOW_MS;
 
@@ -253,11 +254,18 @@ async function listUsers(requester) {
       ...publicUser(user),
       online,
       lastSeenAt,
+      activeSessionCount: Number(sessionMeta?.activeSessionCount || 0),
+      onlineSessionCount: Number(sessionMeta?.onlineSessionCount || 0),
+      onlineSinceAt: sessionMeta?.onlineSinceAt || null,
+      onlineDurationSeconds: Number(sessionMeta?.onlineDurationSeconds || 0),
     });
   }
 
   users.sort((a, b) => {
     if (a.online !== b.online) return a.online ? -1 : 1;
+    if ((a.activeSessionCount || 0) !== (b.activeSessionCount || 0)) {
+      return (b.activeSessionCount || 0) - (a.activeSessionCount || 0);
+    }
     return a.username.localeCompare(b.username);
   });
 
@@ -282,12 +290,54 @@ async function buildActiveSessionMap(container) {
 
     const username = normalizeUsername(session.username);
     const lastSeenAt = session.lastSeenAt || session.createdAt || null;
+    const createdAt = session.createdAt || session.lastSeenAt || null;
     if (!username || !lastSeenAt) continue;
 
-    const previous = map.get(username);
-    if (!previous || new Date(lastSeenAt).getTime() > new Date(previous).getTime()) {
-      map.set(username, lastSeenAt);
+    const lastSeenMs = new Date(lastSeenAt).getTime();
+    if (!Number.isFinite(lastSeenMs)) continue;
+    const createdAtMs = new Date(createdAt || 0).getTime();
+    const isOnline = now - lastSeenMs <= ONLINE_WINDOW_MS;
+
+    const current = map.get(username) || {
+      lastSeenAt: null,
+      lastSeenMs: 0,
+      activeSessionCount: 0,
+      onlineSessionCount: 0,
+      onlineSinceAt: null,
+      onlineSinceMs: Number.POSITIVE_INFINITY,
+    };
+
+    current.activeSessionCount += 1;
+    if (!current.lastSeenAt || lastSeenMs > current.lastSeenMs) {
+      current.lastSeenAt = new Date(lastSeenMs).toISOString();
+      current.lastSeenMs = lastSeenMs;
     }
+
+    if (isOnline) {
+      current.onlineSessionCount += 1;
+      const sinceMs = Number.isFinite(createdAtMs) ? createdAtMs : lastSeenMs;
+      if (sinceMs < current.onlineSinceMs) {
+        current.onlineSinceMs = sinceMs;
+        current.onlineSinceAt = new Date(sinceMs).toISOString();
+      }
+    }
+
+    map.set(username, current);
+  }
+
+  for (const [username, entry] of map.entries()) {
+    const onlineDurationSeconds =
+      entry.onlineSessionCount > 0 && entry.onlineSinceAt
+        ? Math.max(0, Math.floor((now - new Date(entry.onlineSinceAt).getTime()) / 1000))
+        : 0;
+
+    map.set(username, {
+      lastSeenAt: entry.lastSeenAt || null,
+      activeSessionCount: entry.activeSessionCount || 0,
+      onlineSessionCount: entry.onlineSessionCount || 0,
+      onlineSinceAt: entry.onlineSessionCount > 0 ? entry.onlineSinceAt : null,
+      onlineDurationSeconds,
+    });
   }
 
   return map;
