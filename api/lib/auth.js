@@ -337,26 +337,31 @@ function isConfiguredAdminUsername(username) {
 }
 
 function readToken(req) {
-  const auth = readHeader(req, "authorization");
-  if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
-    return auth.slice(7).trim();
-  }
-
-  const fromHeader = readHeader(req, "x-auth-token");
-  if (String(fromHeader || "").trim()) {
-    return String(fromHeader).trim();
-  }
-
   const fromQuery =
     readQuery(req, "authToken") ||
     readQuery(req, "token") ||
     readQuery(req, "x-auth-token");
-  if (String(fromQuery || "").trim()) {
+  if (looksLikeSessionToken(fromQuery)) {
     return String(fromQuery).trim();
   }
 
   const fromRawUrl = readTokenFromRawUrl(req);
-  return String(fromRawUrl || "").trim() || "";
+  if (looksLikeSessionToken(fromRawUrl)) {
+    return String(fromRawUrl).trim();
+  }
+
+  const fromHeader = readHeader(req, "x-auth-token");
+  if (looksLikeSessionToken(fromHeader)) {
+    return String(fromHeader).trim();
+  }
+
+  const auth = readHeader(req, "authorization");
+  const bearer = parseBearerToken(auth);
+  if (looksLikeSessionToken(bearer)) {
+    return bearer;
+  }
+
+  return "";
 }
 
 function readHeader(req, headerName) {
@@ -408,6 +413,17 @@ function readTokenFromRawUrl(req) {
     const params = new URLSearchParams(search);
     return params.get("authToken") || params.get("token") || params.get("x-auth-token") || "";
   }
+}
+
+function parseBearerToken(authHeader) {
+  const value = String(authHeader || "").trim();
+  if (!/^bearer\s+/i.test(value)) return "";
+  return value.replace(/^bearer\s+/i, "").trim();
+}
+
+function looksLikeSessionToken(input) {
+  const token = String(input || "").trim();
+  return /^[a-f0-9]{64}$/i.test(token);
 }
 
 function publicUser(user) {
