@@ -6,6 +6,7 @@ const CLOUD_API_BASE = "/api/documents";
 const AUTH_API_BASE = "/api/auth";
 const USERS_API_BASE = "/api/users";
 const AUTH_TOKEN_KEY = "word-card-auth-token-v1";
+const AUTH_USER_KEY = "word-card-auth-user-v1";
 const PDF_ENGINE_URLS = [
   "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
   "https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js",
@@ -177,8 +178,26 @@ async function bootAuth() {
   }
 
   state.authToken = savedToken;
+  const cachedUser = getCachedAuthUser();
+  if (cachedUser) {
+    state.currentUser = cachedUser;
+    state.workspaceUserId = cachedUser.id;
+    hideAuthOverlay();
+    loadFromStorage();
+    renderFileList();
+    renderReviewList();
+    renderCurrentView();
+    updateSessionUI();
+  }
+
   const me = await fetchCurrentUser();
   if (!me) {
+    if (cachedUser) {
+      updateCloudSyncStatus("云端：用户校验失败，暂用本地登录态", "error");
+      await loadWorkspaceUsers(false);
+      await initializeCloudSync();
+      return;
+    }
     clearAuthSession();
     resetWorkspaceState();
     renderFileList();
@@ -255,6 +274,7 @@ async function applyAuthenticatedSession(user, token) {
   state.currentUser = user;
   state.workspaceUserId = user.id;
   localStorage.setItem(AUTH_TOKEN_KEY, token);
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
   hideAuthOverlay();
   switchAuthTab("login");
   resetWorkspaceState();
@@ -273,6 +293,7 @@ function clearAuthSession() {
   state.workspaceUserId = "";
   state.workspaceUsers = [];
   localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USER_KEY);
   updateSessionUI();
 }
 
@@ -427,9 +448,13 @@ async function apiFetch(url, options = {}, config = {}) {
     }
 
     if (response.status === 401 && !silentAuthError) {
-      clearAuthSession();
-      showAuthOverlay("登录已过期，请重新登录");
-      return null;
+      const requestUrl = String(url || "");
+      const shouldForceRelogin = requestUrl.includes(`${AUTH_API_BASE}/me`);
+      if (shouldForceRelogin) {
+        clearAuthSession();
+        showAuthOverlay("登录已过期，请重新登录");
+        return null;
+      }
     }
 
     if (!response.ok) {
@@ -519,6 +544,19 @@ function getScopedStorageKey(baseKey) {
   return scopeId ? `${baseKey}:${scopeId}` : baseKey;
 }
 
+function getCachedAuthUser() {
+  try {
+    const raw = localStorage.getItem(AUTH_USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!parsed.id || !parsed.username) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function saveCompletions() {
   localStorage.setItem(COMPLETION_KEY, JSON.stringify(state.completions));
 }
@@ -537,7 +575,7 @@ async function initializeCloudSync() {
   const cloudDocuments = await fetchCloudDocuments();
   if (!cloudDocuments) {
     state.cloudEnabled = false;
-    updateCloudSyncStatus("云端：不可用，当前仅本地", "error");
+    updateCloudSyncStatus("云端：鉴权或服务异常，当前仅本地（登录状态保留）", "error");
     return;
   }
 
@@ -573,7 +611,7 @@ async function syncFromCloud(manual = false) {
 
   if (!cloudDocuments) {
     state.cloudEnabled = false;
-    updateCloudSyncStatus("云端：同步失败，当前仅本地", "error");
+    updateCloudSyncStatus("云端：同步失败（鉴权或服务异常），当前仅本地", "error");
     return;
   }
 
