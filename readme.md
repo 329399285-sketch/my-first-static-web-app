@@ -1,25 +1,46 @@
-# Vanilla JavaScript App
+﻿# Word Card Studio（Azure Static Web Apps）
 
-[Azure Static Web Apps](https://docs.microsoft.com/azure/static-web-apps/overview) allows you to easily build JavaScript apps in minutes. Use this repo with the [quickstart](https://docs.microsoft.com/azure/static-web-apps/getting-started?tabs=vanilla-javascript) to build and customize a new static site.
+这个项目支持：
+- 用户注册/登录（仅账号+密码，不做邮箱或短信验证）
+- 每个用户独立文档空间（云端隔离）
+- 管理员可切换目标用户空间并代上传 Word 文档
+- 云端同步与 PDF 导出
 
-This repo is used as a starter for a _very basic_ HTML web application using no front-end frameworks.
+## 账号与权限规则
 
-This repo has a dev container. This means if you open it inside a [GitHub Codespace](https://github.com/features/codespaces), or using [VS Code with the remote containers extension](https://code.visualstudio.com/docs/remote/containers), it will be opened inside a container with all the dependencies already installed.
+- 注册接口：`POST /api/auth/register`
+- 登录接口：`POST /api/auth/login`
+- 当前用户：`GET /api/auth/me`
+- 退出登录：`POST /api/auth/logout`
+- 用户列表（仅管理员）：`GET /api/users`
+- 文档接口（按用户空间隔离）：`/api/documents`
 
-## Cloud Sync + PDF Export (Azure Static Web Apps)
+默认规则：
+- 第一个注册账号自动成为 `admin`
+- 后续注册账号默认为 `user`
+- `admin` 可通过 `targetUser` 切换管理目标用户空间
 
-This project now supports:
-- Cloud document storage via Azure Static Web Apps API + Azure Blob Storage.
-- Cross-device sync (`/api/documents`).
-- PDF export in browser (`下载 PDF` button).
+## Azure 必填配置
 
-### Required Azure configuration
+在 Azure 门户进入：
+`Static Web App -> Configuration -> Application settings`
 
-In your **Azure Static Web App > Configuration > Application settings**, set:
-- `AZURE_STORAGE_CONNECTION_STRING` = your Azure Storage Account connection string
-- `DOCS_CONTAINER_NAME` (optional) = blob container name, default is `word-card-documents`
+新增这些变量：
+- `AZURE_STORAGE_CONNECTION_STRING`：Azure Storage 连接串（必填）
+- `DOCS_CONTAINER_NAME`：文档容器名（可选，默认 `word-card-documents`）
+- `AUTH_CONTAINER_NAME`：账号容器名（可选，默认 `word-card-auth`）
+- `AUTH_SESSION_DAYS`：登录态有效天数（可选，默认 `30`）
 
-After deployment:
-1. Upload/parse documents in one device.
-2. On another device, open the same website and click `云端同步`.
-3. Click `下载 PDF` to export the currently selected parsed document.
+保存后重新部署（或等待自动部署）即可生效。
+
+## 使用流程
+
+1. 首次进入页面，先注册账号并登录。
+2. 管理员账号登录后，可在顶部“管理空间”选择任意用户。
+3. 上传/解析 Word 文档时，数据会写入当前选中的用户空间。
+4. 其他设备登录同一账号后，点击“云端同步”即可拉取数据。
+
+## 安全说明（当前实现）
+
+当前是轻量账号系统，适合个人/教学/小规模使用。
+生产环境建议继续加强：密码强度策略、限流、防爆破、审计日志、管理员初始化策略等。

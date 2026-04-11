@@ -1,7 +1,11 @@
-const STORAGE_KEY = "word-card-studio-files-v3";
+const STORAGE_KEY = "word-card-studio-files-v4";
+const LEGACY_STORAGE_KEY = "word-card-studio-files-v3";
 const THEME_STORAGE_KEY = "word-card-studio-theme-v1";
 const COMPLETION_KEY = "word-card-studio-completions-v1";
 const CLOUD_API_BASE = "/api/documents";
+const AUTH_API_BASE = "/api/auth";
+const USERS_API_BASE = "/api/users";
+const AUTH_TOKEN_KEY = "word-card-auth-token-v1";
 const PDF_ENGINE_URLS = [
   "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js",
   "https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js",
@@ -30,6 +34,10 @@ const state = {
   completions: {},
   cloudEnabled: false,
   cloudStatus: "云端：未连接",
+  authToken: "",
+  currentUser: null,
+  workspaceUserId: "",
+  workspaceUsers: [],
   wrongEntries: [],
 };
 let autoSpeakTimer = null;
@@ -73,6 +81,22 @@ const themeDarkBtn = document.getElementById("themeDarkBtn");
 const todayReviewList = document.getElementById("todayReviewList");
 const todayReviewCount = document.getElementById("todayReviewCount");
 const reviewItemTemplate = document.getElementById("reviewItemTemplate");
+const authOverlay = document.getElementById("authOverlay");
+const authLoginTab = document.getElementById("authLoginTab");
+const authRegisterTab = document.getElementById("authRegisterTab");
+const loginForm = document.getElementById("loginForm");
+const registerForm = document.getElementById("registerForm");
+const loginUsernameInput = document.getElementById("loginUsername");
+const loginPasswordInput = document.getElementById("loginPassword");
+const registerUsernameInput = document.getElementById("registerUsername");
+const registerPasswordInput = document.getElementById("registerPassword");
+const authMessage = document.getElementById("authMessage");
+const authSessionBar = document.getElementById("authSessionBar");
+const sessionUserText = document.getElementById("sessionUserText");
+const adminWorkspacePanel = document.getElementById("adminWorkspacePanel");
+const workspaceUserSelect = document.getElementById("workspaceUserSelect");
+const refreshUsersBtn = document.getElementById("refreshUsersBtn");
+const logoutBtn = document.getElementById("logoutBtn");
 
 init();
 
@@ -87,7 +111,7 @@ function init() {
   renderFileList();
   renderReviewList();
   renderCurrentView();
-  void initializeCloudSync();
+  void bootAuth();
 }
 
 function bindEvents() {
@@ -107,6 +131,21 @@ function bindEvents() {
   syncCloudBtn?.addEventListener("click", () => void syncFromCloud(true));
   downloadPdfBtn?.addEventListener("click", () => void exportCurrentFilePdf());
   wrongManagerBtn?.addEventListener("click", openWrongManager);
+  authLoginTab?.addEventListener("click", () => switchAuthTab("login"));
+  authRegisterTab?.addEventListener("click", () => switchAuthTab("register"));
+  loginForm?.addEventListener("submit", handleLoginSubmit);
+  registerForm?.addEventListener("submit", handleRegisterSubmit);
+  logoutBtn?.addEventListener("click", handleLogoutClick);
+  refreshUsersBtn?.addEventListener("click", () => void loadWorkspaceUsers(true));
+  workspaceUserSelect?.addEventListener("change", () => {
+    state.workspaceUserId = workspaceUserSelect.value || state.currentUser?.id || "";
+    loadFromStorage();
+    updateSessionUI();
+    renderFileList();
+    renderReviewList();
+    renderCurrentView();
+    void syncFromCloud(true);
+  });
   themeLightBtn?.addEventListener("click", () => setTheme("light"));
   themeDarkBtn?.addEventListener("click", () => setTheme("dark"));
 
@@ -126,6 +165,287 @@ function bindEvents() {
   cardsViewport.addEventListener("touchend", handleTouchEnd, { passive: true });
 }
 
+async function bootAuth() {
+  const savedToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+  if (!savedToken) {
+    resetWorkspaceState();
+    renderFileList();
+    renderReviewList();
+    renderCurrentView();
+    showAuthOverlay("请先登录或注册账号");
+    return;
+  }
+
+  state.authToken = savedToken;
+  const me = await fetchCurrentUser();
+  if (!me) {
+    clearAuthSession();
+    resetWorkspaceState();
+    renderFileList();
+    renderReviewList();
+    renderCurrentView();
+    showAuthOverlay("登录已失效，请重新登录");
+    return;
+  }
+
+  await applyAuthenticatedSession(me, savedToken);
+}
+
+async function handleLoginSubmit(event) {
+  event.preventDefault();
+  const username = String(loginUsernameInput?.value || "").trim();
+  const password = String(loginPasswordInput?.value || "").trim();
+  if (!username || !password) {
+    setAuthMessage("请输入用户名和密码", "error");
+    return;
+  }
+
+  setAuthMessage("登录中...", "normal");
+  const response = await authPost("/login", { username, password });
+  if (!response?.ok) {
+    setAuthMessage(response?.message || "登录失败", "error");
+    return;
+  }
+
+  await applyAuthenticatedSession(response.user, response.token);
+  setAuthMessage("");
+}
+
+async function handleRegisterSubmit(event) {
+  event.preventDefault();
+  const username = String(registerUsernameInput?.value || "").trim();
+  const password = String(registerPasswordInput?.value || "").trim();
+  if (!username || !password) {
+    setAuthMessage("请输入用户名和密码", "error");
+    return;
+  }
+  if (username.length < 3 || password.length < 4) {
+    setAuthMessage("用户名至少 3 位，密码至少 4 位", "error");
+    return;
+  }
+
+  setAuthMessage("注册中...", "normal");
+  const response = await authPost("/register", { username, password });
+  if (!response?.ok) {
+    setAuthMessage(response?.message || "注册失败", "error");
+    return;
+  }
+
+  await applyAuthenticatedSession(response.user, response.token);
+  setAuthMessage("");
+}
+
+async function handleLogoutClick() {
+  try {
+    await apiFetch(`${AUTH_API_BASE}/logout`, { method: "POST" });
+  } catch (error) {
+    console.warn("退出登录请求失败：", error);
+  }
+
+  clearAuthSession();
+  showAuthOverlay("你已退出登录");
+  resetWorkspaceState();
+  renderFileList();
+  renderReviewList();
+  renderCurrentView();
+}
+
+async function applyAuthenticatedSession(user, token) {
+  state.authToken = token;
+  state.currentUser = user;
+  state.workspaceUserId = user.id;
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  hideAuthOverlay();
+  switchAuthTab("login");
+  resetWorkspaceState();
+  loadFromStorage();
+  renderFileList();
+  renderReviewList();
+  renderCurrentView();
+  updateSessionUI();
+  await loadWorkspaceUsers(false);
+  await initializeCloudSync();
+}
+
+function clearAuthSession() {
+  state.authToken = "";
+  state.currentUser = null;
+  state.workspaceUserId = "";
+  state.workspaceUsers = [];
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  updateSessionUI();
+}
+
+function resetWorkspaceState() {
+  state.files = [];
+  state.selectedFileId = null;
+  state.cards = [];
+  state.currentCardIndex = 0;
+  state.wrongEntries = [];
+}
+
+function showAuthOverlay(message = "") {
+  authOverlay?.classList.remove("hidden");
+  setAuthMessage(message, message ? "normal" : "normal");
+  updateSessionUI();
+}
+
+function hideAuthOverlay() {
+  authOverlay?.classList.add("hidden");
+}
+
+function switchAuthTab(tab) {
+  const isLogin = tab !== "register";
+  authLoginTab?.classList.toggle("active", isLogin);
+  authRegisterTab?.classList.toggle("active", !isLogin);
+  loginForm?.classList.toggle("hidden", !isLogin);
+  registerForm?.classList.toggle("hidden", isLogin);
+  if (isLogin) {
+    loginUsernameInput?.focus();
+  } else {
+    registerUsernameInput?.focus();
+  }
+}
+
+function setAuthMessage(message, status = "normal") {
+  if (!authMessage) return;
+  authMessage.textContent = message || "";
+  authMessage.classList.remove("error", "success");
+  if (status === "error" || status === "success") {
+    authMessage.classList.add(status);
+  }
+}
+
+function updateSessionUI() {
+  const user = state.currentUser;
+  if (!user) {
+    authSessionBar?.classList.add("hidden");
+    adminWorkspacePanel?.classList.add("hidden");
+    return;
+  }
+
+  authSessionBar?.classList.remove("hidden");
+  if (sessionUserText) {
+    const roleText = user.role === "admin" ? "管理员" : "用户";
+    const workspaceName = getWorkspaceDisplayName();
+    sessionUserText.textContent = `${user.username}（${roleText}） · 当前空间：${workspaceName}`;
+  }
+
+  if (user.role === "admin") {
+    adminWorkspacePanel?.classList.remove("hidden");
+  } else {
+    adminWorkspacePanel?.classList.add("hidden");
+  }
+}
+
+function getWorkspaceDisplayName() {
+  const target = state.workspaceUsers.find((item) => item.id === state.workspaceUserId);
+  return target?.username || state.currentUser?.username || "未选择";
+}
+
+async function fetchCurrentUser() {
+  const response = await apiFetch(`${AUTH_API_BASE}/me`, { method: "GET" }, { silentAuthError: true });
+  if (!response?.ok) return null;
+  return response.user || null;
+}
+
+async function loadWorkspaceUsers(showStatus = false) {
+  if (!state.currentUser) return;
+  const previousWorkspaceId = state.workspaceUserId;
+
+  if (state.currentUser.role !== "admin") {
+    state.workspaceUsers = [{ id: state.currentUser.id, username: state.currentUser.username }];
+    state.workspaceUserId = state.currentUser.id;
+    renderWorkspaceSelect();
+    updateSessionUI();
+    return;
+  }
+
+  if (showStatus) updateCloudSyncStatus("云端：读取用户列表中...", "syncing");
+  const response = await apiFetch(USERS_API_BASE, { method: "GET" }, { silentAuthError: true });
+  if (!response?.ok) {
+    if (showStatus) updateCloudSyncStatus("云端：读取用户列表失败", "error");
+    return;
+  }
+
+  state.workspaceUsers = Array.isArray(response.users) ? response.users : [];
+  if (!state.workspaceUsers.some((item) => item.id === state.workspaceUserId)) {
+    state.workspaceUserId = state.workspaceUsers[0]?.id || state.currentUser.id;
+  }
+  renderWorkspaceSelect();
+  updateSessionUI();
+
+  if (state.workspaceUserId !== previousWorkspaceId) {
+    loadFromStorage();
+    renderFileList();
+    renderReviewList();
+    renderCurrentView();
+  }
+}
+
+function renderWorkspaceSelect() {
+  if (!workspaceUserSelect) return;
+  workspaceUserSelect.innerHTML = "";
+  for (const user of state.workspaceUsers) {
+    const option = document.createElement("option");
+    option.value = user.id;
+    option.textContent = user.username;
+    workspaceUserSelect.appendChild(option);
+  }
+  workspaceUserSelect.value = state.workspaceUserId || state.currentUser?.id || "";
+}
+
+async function authPost(path, payload) {
+  const response = await apiFetch(`${AUTH_API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  }, { allowWithoutToken: true, silentAuthError: true });
+
+  return response;
+}
+
+async function apiFetch(url, options = {}, config = {}) {
+  const allowWithoutToken = Boolean(config.allowWithoutToken);
+  const silentAuthError = Boolean(config.silentAuthError);
+  const headers = { ...(options.headers || {}) };
+
+  if (state.authToken) {
+    headers.Authorization = `Bearer ${state.authToken}`;
+  } else if (!allowWithoutToken) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(url, { ...options, headers });
+    let body = null;
+    try {
+      body = await response.json();
+    } catch {
+      body = null;
+    }
+
+    if (response.status === 401 && !silentAuthError) {
+      clearAuthSession();
+      showAuthOverlay("登录已过期，请重新登录");
+      return null;
+    }
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        message: body?.message || body?.error || `HTTP ${response.status}`,
+      };
+    }
+
+    return { ok: true, ...(body || {}) };
+  } catch (error) {
+    console.warn("请求失败：", url, error);
+    return { ok: false, message: "网络请求失败" };
+  }
+}
+
 function loadThemePreference() {
   const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
   if (savedTheme === "light" || savedTheme === "dark") {
@@ -139,9 +459,25 @@ function loadThemePreference() {
 }
 
 function loadFromStorage() {
+  resetWorkspaceState();
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const storageKey = getScopedStorageKey(STORAGE_KEY);
+    const legacyScopedKey = getScopedStorageKey(LEGACY_STORAGE_KEY);
+    const hasScopedStorage = storageKey.includes(":");
+    let raw = localStorage.getItem(storageKey);
+
+    if (!raw) {
+      raw = localStorage.getItem(legacyScopedKey);
+    }
+    if (!raw && hasScopedStorage) {
+      raw = localStorage.getItem(STORAGE_KEY) || localStorage.getItem(LEGACY_STORAGE_KEY);
+    }
     if (!raw) return;
+
+    if (!localStorage.getItem(storageKey)) {
+      localStorage.setItem(storageKey, raw);
+    }
+
     const data = JSON.parse(raw);
     if (Array.isArray(data.files)) {
       state.files = data.files;
@@ -169,11 +505,17 @@ function loadCompletions() {
 }
 
 function saveToStorage() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+  const storageKey = getScopedStorageKey(STORAGE_KEY);
+  localStorage.setItem(storageKey, JSON.stringify({
     files: state.files,
     selectedFileId: state.selectedFileId,
     wrongEntries: state.wrongEntries,
   }));
+}
+
+function getScopedStorageKey(baseKey) {
+  const scopeId = state.workspaceUserId || state.currentUser?.id || "";
+  return scopeId ? `${baseKey}:${scopeId}` : baseKey;
 }
 
 function saveCompletions() {
@@ -181,6 +523,15 @@ function saveCompletions() {
 }
 
 async function initializeCloudSync() {
+  if (!state.currentUser) {
+    updateCloudSyncStatus("云端：请先登录", "error");
+    return;
+  }
+
+  if (!state.workspaceUserId) {
+    state.workspaceUserId = state.currentUser.id;
+  }
+
   updateCloudSyncStatus("云端：连接中...", "syncing");
   const cloudDocuments = await fetchCloudDocuments();
   if (!cloudDocuments) {
@@ -253,19 +604,17 @@ function applyCloudDocuments(documents) {
 }
 
 async function fetchCloudDocuments() {
+  if (!state.currentUser) return null;
   try {
-    const response = await fetch(CLOUD_API_BASE, {
+    const response = await apiFetch(buildDocumentsApiUrl(""), {
       method: "GET",
-      headers: {
-        "Cache-Control": "no-store",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+      headers: { "Cache-Control": "no-store" },
+    }, { silentAuthError: false });
+    if (!response?.ok) {
+      throw new Error(response?.message || "fetch_cloud_failed");
     }
-    const payload = await response.json();
-    if (Array.isArray(payload?.documents)) return payload.documents;
-    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(response?.documents)) return response.documents;
+    if (Array.isArray(response)) return response;
     return [];
   } catch (error) {
     console.warn("拉取云端文档失败：", error);
@@ -301,17 +650,18 @@ function buildCloudPayload(file) {
 }
 
 async function upsertCloudDocument(file, silent = false) {
+  if (!state.currentUser) return false;
   try {
     const payload = buildCloudPayload(file);
-    const response = await fetch(`${CLOUD_API_BASE}/${encodeURIComponent(file.id)}`, {
+    const response = await apiFetch(buildDocumentsApiUrl(file.id), {
       method: "PUT",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    }, { silentAuthError: true });
+    if (!response?.ok) {
+      throw new Error(response?.message || "upload_failed");
     }
     if (!silent) updateCloudSyncStatus(`云端：已更新 ${file.name}`, "ok");
     return true;
@@ -323,18 +673,29 @@ async function upsertCloudDocument(file, silent = false) {
 }
 
 async function deleteCloudDocument(fileId) {
+  if (!state.currentUser) return;
   try {
-    const response = await fetch(`${CLOUD_API_BASE}/${encodeURIComponent(fileId)}`, {
+    const response = await apiFetch(buildDocumentsApiUrl(fileId), {
       method: "DELETE",
-    });
-    if (!response.ok && response.status !== 404) {
-      throw new Error(`HTTP ${response.status}`);
+    }, { silentAuthError: true });
+    if (!response?.ok && response?.status !== 404) {
+      throw new Error(response?.message || "delete_failed");
     }
     updateCloudSyncStatus("云端：删除成功", "ok");
   } catch (error) {
     console.warn("删除云端文档失败：", error);
     updateCloudSyncStatus("云端：删除失败，稍后重试", "error");
   }
+}
+
+function buildDocumentsApiUrl(id = "") {
+  const path = id ? `${CLOUD_API_BASE}/${encodeURIComponent(id)}` : CLOUD_API_BASE;
+  if (state.currentUser?.role !== "admin") return path;
+
+  const targetUser = state.workspaceUserId || state.currentUser.id;
+  if (!targetUser) return path;
+  const join = path.includes("?") ? "&" : "?";
+  return `${path}${join}targetUser=${encodeURIComponent(targetUser)}`;
 }
 
 function updateCloudSyncStatus(message, status = "normal") {
@@ -1385,7 +1746,7 @@ function exportTextSectionsToPdf({ filename, title, subtitle, sections }) {
   }
 
   const pad = 68;
-  const lineHeight = 36;
+  const lineHeight = 39;
   const maxX = canvas.width - pad;
   const maxY = canvas.height - pad;
   let y = pad;
@@ -1429,12 +1790,12 @@ function exportTextSectionsToPdf({ filename, title, subtitle, sections }) {
   };
 
   resetPage();
-  drawLines(title || "文档导出", "700 46px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#0f172a", 54, 0, 10);
-  drawLines(subtitle || "", "500 24px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#334155", 34, 0, 18);
+  drawLines(title || "文档导出", "700 48px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#0f172a", 56, 0, 10);
+  drawLines(subtitle || "", "500 26px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#334155", 36, 0, 18);
 
   for (const section of sections || []) {
-    drawLines(section.title || "", "700 32px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#1d4ed8", 42, 8, 6);
-    drawLines(section.body || "", "500 25px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#111827", lineHeight, 0, 18);
+    drawLines(section.title || "", "700 34px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#1d4ed8", 44, 8, 6);
+    drawLines(section.body || "", "500 27px 'Noto Sans SC', 'Microsoft YaHei', sans-serif", "#111827", lineHeight, 0, 18);
   }
 
   if (!pageHasContent && isFirstPage) {

@@ -1,29 +1,41 @@
-﻿const { BlobServiceClient } = require("@azure/storage-blob");
-const { randomUUID } = require("crypto");
+﻿const { randomUUID } = require("crypto");
+const { resolveAuth } = require("../lib/auth");
+const { getContainerClient, safeSegment, readJson, writeJson, deleteBlob, listBlobNames, json } = require("../lib/storage");
 
 const CONTAINER_NAME = process.env.DOCS_CONTAINER_NAME || "word-card-documents";
 
 module.exports = async function (context, req) {
   const method = String(req.method || "GET").toUpperCase();
   const routeId = req.params?.id ? decodeURIComponent(req.params.id) : "";
-  const userId = getUserId(req);
 
   try {
-    const container = await getContainerClient();
+    const auth = await resolveAuth(req);
+    if (!auth) {
+      context.res = json(401, { ok: false, message: "unauthorized" });
+      return;
+    }
+
+    const ownerId = resolveOwnerId(req, auth.user);
+    if (!ownerId) {
+      context.res = json(403, { ok: false, message: "forbidden" });
+      return;
+    }
+
+    const container = await getContainerClient(CONTAINER_NAME);
 
     if (method === "GET") {
       if (routeId) {
-        const document = await getDocument(container, userId, routeId);
+        const document = await getDocument(container, ownerId, routeId);
         if (!document) {
-          context.res = json(404, { error: "document_not_found" });
+          context.res = json(404, { ok: false, message: "document_not_found" });
           return;
         }
-        context.res = json(200, { document });
+        context.res = json(200, { ok: true, document });
         return;
       }
 
-      const documents = await listDocuments(container, userId);
-      context.res = json(200, { documents });
+      const documents = await listDocuments(container, ownerId);
+      context.res = json(200, { ok: true, documents });
       return;
     }
 
@@ -31,62 +43,55 @@ module.exports = async function (context, req) {
       const body = normalizeBody(req.body);
       const documentId = routeId || String(body.id || randomUUID());
       const now = new Date().toISOString();
-
       const document = normalizeDocument({
         ...body,
         id: documentId,
+        ownerId,
         updatedAt: now,
         createdAt: body.createdAt || now,
       });
 
-      await saveDocument(container, userId, document.id, document);
+      await saveDocument(container, ownerId, document.id, document);
       context.res = json(200, { ok: true, document });
       return;
     }
 
     if (method === "DELETE") {
       if (!routeId) {
-        context.res = json(400, { error: "id_required" });
+        context.res = json(400, { ok: false, message: "id_required" });
         return;
       }
-
-      const blobName = getBlobName(userId, routeId);
-      await container.getBlockBlobClient(blobName).deleteIfExists();
+      await deleteBlob(container, getBlobName(ownerId, routeId));
       context.res = json(200, { ok: true });
       return;
     }
 
-    context.res = json(405, { error: "method_not_allowed" });
+    context.res = json(405, { ok: false, message: "method_not_allowed" });
   } catch (error) {
     context.log.error("documents api failed", error);
-    context.res = json(500, {
-      error: "internal_error",
-      message: error?.message || "unknown error",
-    });
+    context.res = json(500, { ok: false, message: error?.message || "internal_error" });
   }
 };
 
-async function getContainerClient() {
-  const connStr = process.env.AZURE_STORAGE_CONNECTION_STRING;
-  if (!connStr) {
-    throw new Error("AZURE_STORAGE_CONNECTION_STRING is not set.");
-  }
-
-  const serviceClient = BlobServiceClient.fromConnectionString(connStr);
-  const container = serviceClient.getContainerClient(CONTAINER_NAME);
-  await container.createIfNotExists();
-  return container;
+function resolveOwnerId(req, user) {
+  if (!user) return "";
+  const target = String(req.query?.targetUser || req.headers?.["x-target-user"] || "").trim();
+  if (!target) return user.id;
+  if (user.role === "admin") return target;
+  return target === user.id ? target : "";
 }
 
-async function listDocuments(container, userId) {
-  const prefix = `${safeSegment(userId)}/`;
+async function listDocuments(container, ownerId) {
+  const prefix = `${safeSegment(ownerId)}/`;
+  const names = await listBlobNames(container, prefix);
   const documents = [];
 
-  for await (const blob of container.listBlobsFlat({ prefix })) {
-    const id = getIdFromBlobName(blob.name);
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const id = getIdFromBlobName(name);
     if (!id) continue;
 
-    const document = await getDocument(container, userId, id);
+    const document = await getDocument(container, ownerId, id);
     if (document) documents.push(document);
   }
 
@@ -94,31 +99,22 @@ async function listDocuments(container, userId) {
   return documents;
 }
 
-async function getDocument(container, userId, id) {
-  const blobClient = container.getBlockBlobClient(getBlobName(userId, id));
-  const exists = await blobClient.exists();
-  if (!exists) return null;
-
-  const response = await blobClient.download();
-  const text = await streamToString(response.readableStreamBody);
-  const parsed = JSON.parse(text || "{}");
+async function getDocument(container, ownerId, id) {
+  const blobName = getBlobName(ownerId, id);
+  const parsed = await readJson(container, blobName, null);
+  if (!parsed) return null;
   return normalizeDocument(parsed);
 }
 
-async function saveDocument(container, userId, id, document) {
-  const blobClient = container.getBlockBlobClient(getBlobName(userId, id));
-  const body = JSON.stringify(document);
-  await blobClient.upload(body, Buffer.byteLength(body), {
-    blobHTTPHeaders: {
-      blobContentType: "application/json; charset=utf-8",
-    },
-  });
+async function saveDocument(container, ownerId, id, document) {
+  await writeJson(container, getBlobName(ownerId, id), document);
 }
 
 function normalizeDocument(input) {
   const source = input || {};
   return {
     id: String(source.id || randomUUID()),
+    ownerId: String(source.ownerId || ""),
     name: String(source.name || "未命名文档"),
     type: String(source.type || "text/plain"),
     size: Number(source.size || 0),
@@ -143,8 +139,8 @@ function normalizeBody(body) {
   return {};
 }
 
-function getBlobName(userId, id) {
-  return `${safeSegment(userId)}/${safeSegment(id)}.json`;
+function getBlobName(ownerId, id) {
+  return `${safeSegment(ownerId)}/${safeSegment(id)}.json`;
 }
 
 function getIdFromBlobName(blobName) {
@@ -152,44 +148,4 @@ function getIdFromBlobName(blobName) {
   const filename = parts[parts.length - 1] || "";
   if (!filename.endsWith(".json")) return "";
   return filename.slice(0, -5);
-}
-
-function safeSegment(value) {
-  return String(value || "")
-    .trim()
-    .replace(/[^a-zA-Z0-9_.-]/g, "_") || "default";
-}
-
-function getUserId(req) {
-  const principalHeader = req.headers?.["x-ms-client-principal"];
-  if (!principalHeader) return "public";
-
-  try {
-    const decoded = Buffer.from(principalHeader, "base64").toString("utf8");
-    const principal = JSON.parse(decoded);
-    return principal.userId || principal.userDetails || "public";
-  } catch {
-    return "public";
-  }
-}
-
-function json(status, body) {
-  return {
-    status,
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body,
-  };
-}
-
-async function streamToString(readableStream) {
-  if (!readableStream) return "";
-
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    readableStream.on("data", (data) => chunks.push(Buffer.from(data)));
-    readableStream.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    readableStream.on("error", reject);
-  });
 }
