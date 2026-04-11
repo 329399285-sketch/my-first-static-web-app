@@ -75,7 +75,11 @@ module.exports = async function (context, req) {
 
 function resolveOwnerId(req, user) {
   if (!user) return "";
-  const target = String(req.query?.targetUser || req.headers?.["x-target-user"] || "").trim();
+  const targetFromQuery =
+    typeof req.query?.get === "function"
+      ? req.query.get("targetUser")
+      : req.query?.targetUser;
+  const target = String(targetFromQuery || req.headers?.["x-target-user"] || req.headers?.["X-Target-User"] || "").trim();
   if (!target) return user.id;
   if (user.role === "admin") return target;
   return target === user.id ? target : "";

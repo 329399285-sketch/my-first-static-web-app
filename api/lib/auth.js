@@ -158,12 +158,23 @@ async function listUsers(requester) {
 }
 
 function readToken(req) {
-  const auth = req.headers?.authorization || req.headers?.Authorization || "";
+  const auth = readHeader(req, "authorization");
   if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim();
   }
-  const fromHeader = req.headers?.["x-auth-token"] || req.headers?.["X-Auth-Token"];
+  const fromHeader = readHeader(req, "x-auth-token");
   return String(fromHeader || "").trim() || "";
+}
+
+function readHeader(req, headerName) {
+  const headers = req?.headers;
+  if (!headers) return "";
+
+  if (typeof headers.get === "function") {
+    return headers.get(headerName) || headers.get(String(headerName).toLowerCase()) || "";
+  }
+
+  return headers[headerName] || headers[String(headerName).toLowerCase()] || headers[String(headerName).toUpperCase()] || "";
 }
 
 function publicUser(user) {

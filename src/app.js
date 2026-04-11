@@ -412,6 +412,7 @@ async function apiFetch(url, options = {}, config = {}) {
 
   if (state.authToken) {
     headers.Authorization = `Bearer ${state.authToken}`;
+    headers["x-auth-token"] = state.authToken;
   } else if (!allowWithoutToken) {
     return null;
   }
