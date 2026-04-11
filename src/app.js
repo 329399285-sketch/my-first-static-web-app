@@ -519,16 +519,20 @@ async function apiFetch(url, options = {}, config = {}) {
   const silentAuthError = Boolean(config.silentAuthError);
   const retryWithQueryToken = Boolean(config.retryWithQueryToken);
   const headers = { ...(options.headers || {}) };
+  let requestUrl = url;
 
   if (state.authToken) {
     headers.Authorization = `Bearer ${state.authToken}`;
     headers["x-auth-token"] = state.authToken;
+    if (!allowWithoutToken) {
+      requestUrl = buildUrlWithAuthToken(url, state.authToken);
+    }
   } else if (!allowWithoutToken) {
     return null;
   }
 
   try {
-    const response = await fetch(url, { ...options, headers });
+    const response = await fetch(requestUrl, { ...options, headers });
     let body = null;
     try {
       body = await response.json();
@@ -537,8 +541,8 @@ async function apiFetch(url, options = {}, config = {}) {
     }
 
     if (response.status === 401 && state.authToken && !retryWithQueryToken) {
-      const retryUrl = buildUrlWithAuthToken(url, state.authToken);
-      if (retryUrl && retryUrl !== url) {
+      const retryUrl = buildUrlWithAuthToken(requestUrl, state.authToken);
+      if (retryUrl && retryUrl !== requestUrl) {
         return apiFetch(retryUrl, options, {
           ...config,
           retryWithQueryToken: true,
@@ -875,7 +879,7 @@ function formatCloudErrorStatus(fallback) {
     return "云端：未配置存储连接串 AZURE_STORAGE_CONNECTION_STRING";
   }
   if (/unauthorized|401/i.test(message)) {
-    return "云端：鉴权失败，请检查 AUTH_SESSION_DAYS 是否为 0/空值，并重新部署";
+    return "云端：鉴权失败（Token 未被 API 读取或会话已过期），请重新登录并重新部署";
   }
   if (/forbidden|403/i.test(message)) {
     return "云端：无权限访问，请确认当前账号为管理员";

@@ -351,7 +351,12 @@ function readToken(req) {
     readQuery(req, "authToken") ||
     readQuery(req, "token") ||
     readQuery(req, "x-auth-token");
-  return String(fromQuery || "").trim() || "";
+  if (String(fromQuery || "").trim()) {
+    return String(fromQuery).trim();
+  }
+
+  const fromRawUrl = readTokenFromRawUrl(req);
+  return String(fromRawUrl || "").trim() || "";
 }
 
 function readHeader(req, headerName) {
@@ -374,6 +379,35 @@ function readQuery(req, key) {
   }
 
   return query[key] || query[String(key).toLowerCase()] || query[String(key).toUpperCase()] || "";
+}
+
+function readTokenFromRawUrl(req) {
+  const rawUrl =
+    req?.originalUrl ||
+    req?.rawUrl ||
+    req?.url ||
+    req?.headers?.["x-ms-original-url"] ||
+    req?.headers?.["X-MS-ORIGINAL-URL"] ||
+    "";
+
+  const text = String(rawUrl || "").trim();
+  if (!text) return "";
+
+  try {
+    const parsed = new URL(text, "https://localhost");
+    return (
+      parsed.searchParams.get("authToken") ||
+      parsed.searchParams.get("token") ||
+      parsed.searchParams.get("x-auth-token") ||
+      ""
+    );
+  } catch {
+    const queryStart = text.indexOf("?");
+    if (queryStart < 0) return "";
+    const search = text.slice(queryStart + 1);
+    const params = new URLSearchParams(search);
+    return params.get("authToken") || params.get("token") || params.get("x-auth-token") || "";
+  }
 }
 
 function publicUser(user) {

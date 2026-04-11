@@ -34,6 +34,30 @@ module.exports = async function (context, req) {
       return;
     }
 
+    if (method === "GET" && action === "debug") {
+      const token = readToken(req);
+      const auth = await resolveAuth(req);
+      context.res = json(200, {
+        ok: true,
+        method,
+        tokenPresent: Boolean(token),
+        tokenLength: String(token || "").length,
+        headers: {
+          authorization: Boolean(readHeader(req, "authorization")),
+          xAuthToken: Boolean(readHeader(req, "x-auth-token")),
+        },
+        query: {
+          authToken: Boolean(readQuery(req, "authToken")),
+          token: Boolean(readQuery(req, "token")),
+          xAuthToken: Boolean(readQuery(req, "x-auth-token")),
+        },
+        authorized: Boolean(auth),
+        user: auth?.user || null,
+        now: new Date().toISOString(),
+      });
+      return;
+    }
+
     if (method === "POST" && action === "logout") {
       const token = readToken(req);
       if (token) await logoutByToken(token);
@@ -59,4 +83,22 @@ function normalizeBody(body) {
     }
   }
   return {};
+}
+
+function readHeader(req, key) {
+  const headers = req?.headers;
+  if (!headers) return "";
+  if (typeof headers.get === "function") {
+    return headers.get(key) || headers.get(String(key).toLowerCase()) || "";
+  }
+  return headers[key] || headers[String(key).toLowerCase()] || headers[String(key).toUpperCase()] || "";
+}
+
+function readQuery(req, key) {
+  const query = req?.query;
+  if (!query) return "";
+  if (typeof query.get === "function") {
+    return query.get(key) || query.get(String(key).toLowerCase()) || "";
+  }
+  return query[key] || query[String(key).toLowerCase()] || query[String(key).toUpperCase()] || "";
 }
