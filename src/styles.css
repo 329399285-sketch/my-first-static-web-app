@@ -810,6 +810,17 @@ body.admin-mode .topbar-actions .action-group {
   cursor: default;
 }
 
+.admin-delete-btn.danger {
+  color: color-mix(in srgb, var(--danger) 84%, #0f172a);
+  border-color: color-mix(in srgb, var(--danger) 36%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel));
+}
+
+.admin-delete-btn[disabled] {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .admin-user-empty {
   color: var(--muted);
   font-size: 0.78rem;

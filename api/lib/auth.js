@@ -202,16 +202,25 @@ async function resolveAuth(req) {
   }
 
   const now = Date.now();
+  const nowIso = new Date(now).toISOString();
   const lastSeenMs = new Date(session.lastSeenAt || session.createdAt || 0).getTime();
+  const expiresAtMs = new Date(session.expiresAt || 0).getTime();
+  const nextExpiresAt = new Date(now);
+  nextExpiresAt.setDate(nextExpiresAt.getDate() + SESSION_DAYS);
+  const shouldRefreshExpiry =
+    !Number.isFinite(expiresAtMs) ||
+    expiresAtMs - now <= SESSION_TOUCH_INTERVAL_MS * 2;
   const needTouch =
     !session.lastSeenAt ||
     Number.isNaN(lastSeenMs) ||
     now - lastSeenMs >= SESSION_TOUCH_INTERVAL_MS ||
-    session.role !== user.role;
+    session.role !== user.role ||
+    shouldRefreshExpiry;
 
   if (needTouch) {
-    session.lastSeenAt = new Date(now).toISOString();
+    session.lastSeenAt = nowIso;
     session.role = user.role;
+    session.expiresAt = nextExpiresAt.toISOString();
     await writeJson(container, sessionBlobName(token), session);
   }
 
@@ -270,6 +279,67 @@ async function listUsers(requester) {
   });
 
   return { ok: true, users };
+}
+
+async function deleteUser(requester, userId) {
+  if (!requester || requester.role !== "admin") {
+    return { ok: false, message: "forbidden" };
+  }
+
+  const cleanUserId = String(userId || "").trim();
+  if (!cleanUserId) {
+    return { ok: false, message: "user_id_required" };
+  }
+
+  const container = await getAuthContainer();
+  const names = await listBlobNames(container, "users/");
+  let targetUser = null;
+
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const user = await readJson(container, name, null);
+    if (!user) continue;
+    if (String(user.id || "") === cleanUserId) {
+      targetUser = user;
+      break;
+    }
+  }
+
+  if (!targetUser) {
+    return { ok: false, message: "user_not_found" };
+  }
+
+  if (String(targetUser.id) === String(requester.id)) {
+    return { ok: false, message: "cannot_delete_self" };
+  }
+
+  if ((targetUser.role || "user") === "admin") {
+    return { ok: false, message: "cannot_delete_admin" };
+  }
+
+  await deleteBlob(container, userBlobName(targetUser.username));
+
+  const sessionNames = await listBlobNames(container, "sessions/");
+  const targetUsername = normalizeUsername(targetUser.username);
+  let removedSessionCount = 0;
+  for (const name of sessionNames) {
+    if (!name.endsWith(".json")) continue;
+    const session = await readJson(container, name, null);
+    if (!session) continue;
+
+    const isMatchedByUserId = String(session.userId || "") === String(targetUser.id);
+    const isMatchedByUsername = normalizeUsername(session.username) === targetUsername;
+    if (!isMatchedByUserId && !isMatchedByUsername) continue;
+
+    await deleteBlob(container, name);
+    removedSessionCount += 1;
+  }
+
+  return {
+    ok: true,
+    user: publicUser(targetUser),
+    removedSessionCount,
+  };
 }
 
 async function buildActiveSessionMap(container) {
@@ -491,6 +561,7 @@ module.exports = {
   resolveAuth,
   logoutByToken,
   listUsers,
+  deleteUser,
   readToken,
   publicUser,
 };

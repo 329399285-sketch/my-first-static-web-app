@@ -185,6 +185,19 @@ async function bootAuth() {
 
   state.authToken = savedToken;
   const me = await fetchCurrentUser();
+  if (me) {
+    await applyAuthenticatedSession(me, savedToken);
+    return;
+  }
+
+  const cachedUser = readSavedAuthUser();
+  if (cachedUser) {
+    await applyAuthenticatedSession(cachedUser, savedToken, { skipCloudInit: true });
+    updateCloudSyncStatus("云端：已自动登录（本地缓存），正在重试云端连接...", "syncing");
+    void initializeCloudSync();
+    return;
+  }
+
   if (!me) {
     clearAuthSession();
     resetWorkspaceState();
@@ -195,7 +208,7 @@ async function bootAuth() {
     return;
   }
 
-  await applyAuthenticatedSession(me, savedToken);
+  return;
 }
 
 async function handleLoginSubmit(event) {
@@ -257,7 +270,8 @@ async function handleLogoutClick() {
   renderCurrentView();
 }
 
-async function applyAuthenticatedSession(user, token) {
+async function applyAuthenticatedSession(user, token, options = {}) {
+  const skipCloudInit = Boolean(options.skipCloudInit);
   state.authToken = token;
   state.currentUser = user;
   state.workspaceUserId = user.id;
@@ -272,7 +286,9 @@ async function applyAuthenticatedSession(user, token) {
   renderCurrentView();
   updateSessionUI();
   await loadWorkspaceUsers(false);
-  await initializeCloudSync();
+  if (!skipCloudInit) {
+    await initializeCloudSync();
+  }
 }
 
 function clearAuthSession() {
@@ -285,6 +301,28 @@ function clearAuthSession() {
   localStorage.removeItem(AUTH_USER_KEY);
   updateSessionUI();
   applyRoleLayout();
+}
+
+function readSavedAuthUser() {
+  try {
+    const raw = localStorage.getItem(AUTH_USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const id = String(parsed.id || "").trim();
+    const username = String(parsed.username || "").trim();
+    if (!id || !username) return null;
+
+    return {
+      id,
+      username,
+      role: parsed.role === "admin" ? "admin" : "user",
+      createdAt: parsed.createdAt || null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function resetWorkspaceState() {
@@ -2494,6 +2532,24 @@ function renderAdminUsersList() {
   }).join("");
 
   adminUsersList.innerHTML = rows;
+  adminUsersList.querySelectorAll(".admin-user-actions").forEach((actionsEl) => {
+    const switchBtn = actionsEl.querySelector(".admin-switch-btn");
+    const userId = switchBtn?.getAttribute("data-user-id") || "";
+    if (!userId) return;
+
+    const user = users.find((item) => item.id === userId);
+    const canDelete = Boolean(user && user.role !== "admin" && user.id !== state.currentUser?.id);
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = `secondary-inline-btn admin-delete-btn${canDelete ? " danger" : ""}`;
+    deleteBtn.setAttribute("data-user-id", userId);
+    deleteBtn.textContent = canDelete ? "删除用户" : "不可删除";
+    if (!canDelete) {
+      deleteBtn.disabled = true;
+    }
+    actionsEl.appendChild(deleteBtn);
+  });
+
   adminUsersList.querySelectorAll(".admin-switch-btn").forEach((button) => {
     button.addEventListener("click", () => {
       const userId = button.getAttribute("data-user-id") || "";
@@ -2507,6 +2563,14 @@ function renderAdminUsersList() {
       const userId = button.getAttribute("data-user-id") || "";
       if (!userId) return;
       void switchWorkspaceUser(userId, { sync: true });
+    });
+  });
+
+  adminUsersList.querySelectorAll(".admin-delete-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.getAttribute("data-user-id") || "";
+      if (!userId) return;
+      void deleteWorkspaceUser(userId);
     });
   });
 }
@@ -2539,6 +2603,50 @@ async function switchWorkspaceUser(userId, options = {}) {
 
   if (sync) {
     await syncFromCloud(true);
+  }
+}
+
+async function deleteWorkspaceUser(userId) {
+  const targetUserId = String(userId || "").trim();
+  if (!targetUserId) return;
+
+  const target = state.workspaceUsers.find((item) => item.id === targetUserId) || null;
+  if (!target) return;
+
+  const targetName = target.username || targetUserId;
+  const confirmed = window.confirm(`确认删除用户“${targetName}”吗？该用户的云端文档和会话会被清理，且不可恢复。`);
+  if (!confirmed) return;
+
+  const response = await apiFetch(`${USERS_API_BASE}?userId=${encodeURIComponent(targetUserId)}`, {
+    method: "DELETE",
+  }, { silentAuthError: true });
+
+  if (!response?.ok) {
+    const messageMap = {
+      forbidden: "当前账号没有删除权限",
+      user_not_found: "用户不存在或已被删除",
+      cannot_delete_self: "不能删除当前登录管理员",
+      cannot_delete_admin: "不能删除管理员账号",
+    };
+    const tip = messageMap[response?.message] || response?.message || "delete_user_failed";
+    alert(`删除失败：${tip}`);
+    return;
+  }
+
+  const wasCurrentWorkspace = targetUserId === state.workspaceUserId;
+  if (wasCurrentWorkspace) {
+    state.workspaceUserId = state.currentUser?.id || "";
+  }
+
+  const removedDocs = Number(response.removedDocumentCount || 0);
+  updateCloudSyncStatus(`云端：已删除用户 ${targetName}，清理文档 ${removedDocs} 个`, "ok");
+
+  await loadWorkspaceUsers(true);
+  if (wasCurrentWorkspace) {
+    loadFromStorage();
+    renderFileList();
+    renderReviewList();
+    renderCurrentView();
   }
 }
 
