@@ -30,6 +30,9 @@
 - `DOCS_CONTAINER_NAME`：文档容器名（可选，默认 `word-card-documents`）
 - `AUTH_CONTAINER_NAME`：账号容器名（可选，默认 `word-card-auth`）
 - `AUTH_SESSION_DAYS`：登录态有效天数（可选，默认 `30`）
+- `ADMIN_USERNAMES`：管理员用户名列表（可选，逗号分隔，默认包含 `xiaoyang`）
+- `DEFAULT_ADMIN_USERNAME`：默认管理员用户名（可选，默认 `xiaoyang`）
+- `DEFAULT_ADMIN_PASSWORD`：默认管理员密码（可选，默认 `000823`）
 
 保存后重新部署（或等待自动部署）即可生效。
 

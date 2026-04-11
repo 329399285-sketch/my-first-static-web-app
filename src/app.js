@@ -39,6 +39,7 @@ const state = {
   currentUser: null,
   workspaceUserId: "",
   workspaceUsers: [],
+  lastCloudError: "",
   wrongEntries: [],
 };
 let autoSpeakTimer = null;
@@ -375,7 +376,12 @@ async function loadWorkspaceUsers(showStatus = false) {
   const previousWorkspaceId = state.workspaceUserId;
 
   if (state.currentUser.role !== "admin") {
-    state.workspaceUsers = [{ id: state.currentUser.id, username: state.currentUser.username }];
+    state.workspaceUsers = [{
+      id: state.currentUser.id,
+      username: state.currentUser.username,
+      role: state.currentUser.role,
+      online: true,
+    }];
     state.workspaceUserId = state.currentUser.id;
     renderWorkspaceSelect();
     updateSessionUI();
@@ -385,11 +391,13 @@ async function loadWorkspaceUsers(showStatus = false) {
   if (showStatus) updateCloudSyncStatus("云端：读取用户列表中...", "syncing");
   const response = await apiFetch(USERS_API_BASE, { method: "GET" }, { silentAuthError: true });
   if (!response?.ok) {
-    if (showStatus) updateCloudSyncStatus("云端：读取用户列表失败", "error");
+    state.lastCloudError = response?.message || "read_users_failed";
+    if (showStatus) updateCloudSyncStatus(formatCloudErrorStatus("云端：读取用户列表失败"), "error");
     return;
   }
 
   state.workspaceUsers = Array.isArray(response.users) ? response.users : [];
+  state.lastCloudError = "";
   if (!state.workspaceUsers.some((item) => item.id === state.workspaceUserId)) {
     state.workspaceUserId = state.workspaceUsers[0]?.id || state.currentUser.id;
   }
@@ -410,7 +418,9 @@ function renderWorkspaceSelect() {
   for (const user of state.workspaceUsers) {
     const option = document.createElement("option");
     option.value = user.id;
-    option.textContent = user.username;
+    const roleText = user.role === "admin" ? "管理员" : "用户";
+    const onlineText = user.online ? "在线" : "离线";
+    option.textContent = `${user.username}（${roleText}·${onlineText}）`;
     workspaceUserSelect.appendChild(option);
   }
   workspaceUserSelect.value = state.workspaceUserId || state.currentUser?.id || "";
@@ -575,7 +585,7 @@ async function initializeCloudSync() {
   const cloudDocuments = await fetchCloudDocuments();
   if (!cloudDocuments) {
     state.cloudEnabled = false;
-    updateCloudSyncStatus("云端：鉴权或服务异常，当前仅本地（登录状态保留）", "error");
+    updateCloudSyncStatus(formatCloudErrorStatus("云端：鉴权或服务异常，当前仅本地（登录状态保留）"), "error");
     return;
   }
 
@@ -611,7 +621,7 @@ async function syncFromCloud(manual = false) {
 
   if (!cloudDocuments) {
     state.cloudEnabled = false;
-    updateCloudSyncStatus("云端：同步失败（鉴权或服务异常），当前仅本地", "error");
+    updateCloudSyncStatus(formatCloudErrorStatus("云端：同步失败（鉴权或服务异常），当前仅本地"), "error");
     return;
   }
 
@@ -644,6 +654,7 @@ function applyCloudDocuments(documents) {
 
 async function fetchCloudDocuments() {
   if (!state.currentUser) return null;
+  state.lastCloudError = "";
   try {
     const response = await apiFetch(buildDocumentsApiUrl(""), {
       method: "GET",
@@ -654,8 +665,10 @@ async function fetchCloudDocuments() {
     }
     if (Array.isArray(response?.documents)) return response.documents;
     if (Array.isArray(response)) return response;
+    state.lastCloudError = "";
     return [];
   } catch (error) {
+    state.lastCloudError = String(error?.message || "fetch_cloud_failed");
     console.warn("拉取云端文档失败：", error);
     return null;
   }
@@ -746,6 +759,26 @@ function updateCloudSyncStatus(message, status = "normal") {
   if (status === "ok" || status === "error" || status === "syncing") {
     cloudSyncStatus.classList.add(status);
   }
+}
+
+function formatCloudErrorStatus(fallback) {
+  const message = String(state.lastCloudError || "").trim();
+  if (!message) return fallback;
+
+  if (/AZURE_STORAGE_CONNECTION_STRING/i.test(message)) {
+    return "云端：未配置存储连接串 AZURE_STORAGE_CONNECTION_STRING";
+  }
+  if (/unauthorized|401/i.test(message)) {
+    return "云端：鉴权失败，请重新登录";
+  }
+  if (/forbidden|403/i.test(message)) {
+    return "云端：无权限访问当前用户空间";
+  }
+  if (/internal_error/i.test(message)) {
+    return "云端：服务异常，请检查 Azure Function 日志";
+  }
+
+  return `云端：${message}`;
 }
 
 function applySidebarSectionState() {
