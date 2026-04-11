@@ -18,6 +18,8 @@ const FIELD_ORDER = [
   "搭配", "近义词", "反义词", "备注", "补充内容"
 ];
 const SCORE_LABEL_KEYWORDS = ["重点程度", "评分", "分数", "重点", "难度", "score", "level"];
+const DEFAULT_EMPTY_TITLE = "把你的单词 Word 文档放进来";
+const DEFAULT_EMPTY_DESC = "左侧上传后，可单独解析每个文件。系统会按序号分段，再把每个单词整理成大卡片。并根据文件名中的日期自动给出今日应复习的文件。";
 
 const state = {
   files: [],
@@ -93,11 +95,14 @@ const loginPasswordInput = document.getElementById("loginPassword");
 const registerUsernameInput = document.getElementById("registerUsername");
 const registerPasswordInput = document.getElementById("registerPassword");
 const authMessage = document.getElementById("authMessage");
-const authSessionBar = document.getElementById("authSessionBar");
+  const authSessionBar = document.getElementById("authSessionBar");
 const sessionUserText = document.getElementById("sessionUserText");
 const adminWorkspacePanel = document.getElementById("adminWorkspacePanel");
 const workspaceUserSelect = document.getElementById("workspaceUserSelect");
 const refreshUsersBtn = document.getElementById("refreshUsersBtn");
+const adminConsole = document.getElementById("adminConsole");
+const adminUsersList = document.getElementById("adminUsersList");
+const adminConsoleRefreshBtn = document.getElementById("adminConsoleRefreshBtn");
 const logoutBtn = document.getElementById("logoutBtn");
 
 init();
@@ -113,6 +118,7 @@ function init() {
   renderFileList();
   renderReviewList();
   renderCurrentView();
+  applyRoleLayout();
   void bootAuth();
 }
 
@@ -139,6 +145,7 @@ function bindEvents() {
   registerForm?.addEventListener("submit", handleRegisterSubmit);
   logoutBtn?.addEventListener("click", handleLogoutClick);
   refreshUsersBtn?.addEventListener("click", () => void loadWorkspaceUsers(true));
+  adminConsoleRefreshBtn?.addEventListener("click", () => void loadWorkspaceUsers(true));
   workspaceUserSelect?.addEventListener("change", () => {
     state.workspaceUserId = workspaceUserSelect.value || state.currentUser?.id || "";
     loadFromStorage();
@@ -179,26 +186,8 @@ async function bootAuth() {
   }
 
   state.authToken = savedToken;
-  const cachedUser = getCachedAuthUser();
-  if (cachedUser) {
-    state.currentUser = cachedUser;
-    state.workspaceUserId = cachedUser.id;
-    hideAuthOverlay();
-    loadFromStorage();
-    renderFileList();
-    renderReviewList();
-    renderCurrentView();
-    updateSessionUI();
-  }
-
   const me = await fetchCurrentUser();
   if (!me) {
-    if (cachedUser) {
-      updateCloudSyncStatus("云端：用户校验失败，暂用本地登录态", "error");
-      await loadWorkspaceUsers(false);
-      await initializeCloudSync();
-      return;
-    }
     clearAuthSession();
     resetWorkspaceState();
     renderFileList();
@@ -293,9 +282,11 @@ function clearAuthSession() {
   state.currentUser = null;
   state.workspaceUserId = "";
   state.workspaceUsers = [];
+  state.lastCloudError = "";
   localStorage.removeItem(AUTH_TOKEN_KEY);
   localStorage.removeItem(AUTH_USER_KEY);
   updateSessionUI();
+  applyRoleLayout();
 }
 
 function resetWorkspaceState() {
@@ -343,6 +334,8 @@ function updateSessionUI() {
   if (!user) {
     authSessionBar?.classList.add("hidden");
     adminWorkspacePanel?.classList.add("hidden");
+    renderAdminUsersList();
+    applyRoleLayout();
     return;
   }
 
@@ -357,6 +350,23 @@ function updateSessionUI() {
     adminWorkspacePanel?.classList.remove("hidden");
   } else {
     adminWorkspacePanel?.classList.add("hidden");
+  }
+
+  renderAdminUsersList();
+  applyRoleLayout();
+}
+
+function isAdminUser(user = state.currentUser) {
+  return Boolean(user && user.role === "admin");
+}
+
+function applyRoleLayout() {
+  const adminMode = isAdminUser();
+  document.body.classList.toggle("admin-mode", adminMode);
+  adminConsole?.classList.toggle("hidden", !adminMode);
+
+  if (adminMode && state.mode !== "study") {
+    state.mode = "study";
   }
 }
 
@@ -375,12 +385,14 @@ async function loadWorkspaceUsers(showStatus = false) {
   if (!state.currentUser) return;
   const previousWorkspaceId = state.workspaceUserId;
 
-  if (state.currentUser.role !== "admin") {
+  if (!isAdminUser()) {
     state.workspaceUsers = [{
       id: state.currentUser.id,
       username: state.currentUser.username,
       role: state.currentUser.role,
       online: true,
+      documentCount: state.files.length,
+      lastSeenAt: new Date().toISOString(),
     }];
     state.workspaceUserId = state.currentUser.id;
     renderWorkspaceSelect();
@@ -392,7 +404,21 @@ async function loadWorkspaceUsers(showStatus = false) {
   const response = await apiFetch(USERS_API_BASE, { method: "GET" }, { silentAuthError: true });
   if (!response?.ok) {
     state.lastCloudError = response?.message || "read_users_failed";
-    if (showStatus) updateCloudSyncStatus(formatCloudErrorStatus("云端：读取用户列表失败"), "error");
+    state.workspaceUsers = [{
+      id: state.currentUser.id,
+      username: state.currentUser.username,
+      role: state.currentUser.role,
+      online: true,
+      documentCount: null,
+      lastSeenAt: null,
+    }];
+    if (!state.workspaceUserId) {
+      state.workspaceUserId = state.currentUser.id;
+    }
+    renderWorkspaceSelect();
+    renderAdminUsersList();
+    updateSessionUI();
+    updateCloudSyncStatus(formatCloudErrorStatus("云端：读取用户列表失败"), "error");
     return;
   }
 
@@ -402,6 +428,7 @@ async function loadWorkspaceUsers(showStatus = false) {
     state.workspaceUserId = state.workspaceUsers[0]?.id || state.currentUser.id;
   }
   renderWorkspaceSelect();
+  renderAdminUsersList();
   updateSessionUI();
 
   if (state.workspaceUserId !== previousWorkspaceId) {
@@ -420,10 +447,61 @@ function renderWorkspaceSelect() {
     option.value = user.id;
     const roleText = user.role === "admin" ? "管理员" : "用户";
     const onlineText = user.online ? "在线" : "离线";
-    option.textContent = `${user.username}（${roleText}·${onlineText}）`;
+    const countText = Number.isFinite(user.documentCount) ? `文档 ${user.documentCount}` : "文档 -";
+    option.textContent = `${user.username}（${roleText}·${onlineText}·${countText}）`;
     workspaceUserSelect.appendChild(option);
   }
   workspaceUserSelect.value = state.workspaceUserId || state.currentUser?.id || "";
+}
+
+function renderAdminUsersList() {
+  if (!adminUsersList) return;
+  if (!isAdminUser()) {
+    adminUsersList.innerHTML = "";
+    return;
+  }
+
+  const users = Array.isArray(state.workspaceUsers) ? state.workspaceUsers : [];
+  if (!users.length) {
+    adminUsersList.innerHTML = `<div class="admin-user-empty">暂无用户数据，点击“刷新用户状态”重试。</div>`;
+    return;
+  }
+
+  const rows = users.map((user) => {
+    const active = user.id === state.workspaceUserId;
+    const roleText = user.role === "admin" ? "管理员" : "用户";
+    const onlineText = user.online ? "在线" : "离线";
+    const docCount = Number.isFinite(user.documentCount) ? `${user.documentCount}` : "-";
+    const lastSeen = user.lastSeenAt ? formatDateTime(user.lastSeenAt) : "暂无";
+
+    return `
+      <div class="admin-user-row ${active ? "active" : ""}">
+        <div class="admin-user-main">
+          <div class="admin-user-name">${escapeHtml(user.username || "未知用户")}</div>
+          <div class="admin-user-meta">${roleText} · ${onlineText} · 文档 ${docCount} · 最近活跃 ${escapeHtml(lastSeen)}</div>
+        </div>
+        <button class="secondary-inline-btn admin-switch-btn" data-user-id="${escapeHtml(user.id || "")}" ${active ? "disabled" : ""}>
+          ${active ? "当前空间" : "切换空间"}
+        </button>
+      </div>
+    `;
+  }).join("");
+
+  adminUsersList.innerHTML = rows;
+  adminUsersList.querySelectorAll(".admin-switch-btn").forEach((button) => {
+    button.addEventListener("click", () => {
+      const userId = button.getAttribute("data-user-id") || "";
+      if (!userId || userId === state.workspaceUserId) return;
+      state.workspaceUserId = userId;
+      if (workspaceUserSelect) workspaceUserSelect.value = userId;
+      loadFromStorage();
+      updateSessionUI();
+      renderFileList();
+      renderReviewList();
+      renderCurrentView();
+      void syncFromCloud(true);
+    });
+  });
 }
 
 async function authPost(path, payload) {
@@ -554,19 +632,6 @@ function getScopedStorageKey(baseKey) {
   return scopeId ? `${baseKey}:${scopeId}` : baseKey;
 }
 
-function getCachedAuthUser() {
-  try {
-    const raw = localStorage.getItem(AUTH_USER_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    if (!parsed.id || !parsed.username) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
 function saveCompletions() {
   localStorage.setItem(COMPLETION_KEY, JSON.stringify(state.completions));
 }
@@ -599,6 +664,11 @@ async function initializeCloudSync() {
 
   if (!state.files.length) {
     updateCloudSyncStatus("云端：已连接（暂无文档）", "ok");
+    return;
+  }
+
+  if (isAdminUser()) {
+    updateCloudSyncStatus("云端：管理员模式下不自动回写，请手动上传或同步目标用户文档", "ok");
     return;
   }
 
@@ -765,6 +835,9 @@ function formatCloudErrorStatus(fallback) {
   const message = String(state.lastCloudError || "").trim();
   if (!message) return fallback;
 
+  if (/read_users_failed/i.test(message)) {
+    return "云端：管理员读取用户列表失败，请检查账号权限与 API 服务";
+  }
   if (/AZURE_STORAGE_CONNECTION_STRING/i.test(message)) {
     return "云端：未配置存储连接串 AZURE_STORAGE_CONNECTION_STRING";
   }
@@ -772,7 +845,10 @@ function formatCloudErrorStatus(fallback) {
     return "云端：鉴权失败，请重新登录";
   }
   if (/forbidden|403/i.test(message)) {
-    return "云端：无权限访问当前用户空间";
+    return "云端：无权限访问，请确认当前账号为管理员";
+  }
+  if (/network|failed to fetch|网络请求失败/i.test(message)) {
+    return "云端：网络异常，API 不可达";
   }
   if (/internal_error/i.test(message)) {
     return "云端：服务异常，请检查 Azure Function 日志";
@@ -924,6 +1000,19 @@ function renderFileList() {
 
 function renderReviewList() {
   todayReviewList.innerHTML = "";
+
+  if (isAdminUser()) {
+    todayReviewCount.textContent = "—";
+    const tip = document.createElement("div");
+    tip.className = "glass";
+    tip.style.borderRadius = "18px";
+    tip.style.padding = "14px";
+    tip.style.color = "var(--muted)";
+    tip.textContent = "管理员模式下不展示复习计划，请通过“用户管理”切换用户空间后上传或同步文档。";
+    todayReviewList.appendChild(tip);
+    return;
+  }
+
   const dueFiles = getTodayReviewFiles();
   todayReviewCount.textContent = String(dueFiles.length);
 
@@ -965,11 +1054,21 @@ function renderCurrentView() {
     return;
   }
 
+  if (isAdminUser() && !current) {
+    emptyState.classList.remove("hidden");
+    cardsArea.classList.add("hidden");
+    currentDocTitle.textContent = "管理员控制台";
+    currentDocMeta.textContent = "请先在“用户管理”中切换目标用户，然后上传 Word 或点击云端同步。";
+    setEmptyStateCopy("管理员模式已启用", "你可以查看用户在线状态、切换用户空间，并管理该用户的文档解析与同步。");
+    return;
+  }
+
   if (!current) {
     emptyState.classList.remove("hidden");
     cardsArea.classList.add("hidden");
     currentDocTitle.textContent = "请选择左侧文件并点击“解析”";
     currentDocMeta.textContent = "解析后会在这里显示单词卡片，可左右切换、朗读和默写。";
+    setEmptyStateCopy(DEFAULT_EMPTY_TITLE, DEFAULT_EMPTY_DESC);
     return;
   }
 
@@ -981,6 +1080,7 @@ function renderCurrentView() {
   if (!current.parsedCards?.length) {
     emptyState.classList.remove("hidden");
     cardsArea.classList.add("hidden");
+    setEmptyStateCopy(DEFAULT_EMPTY_TITLE, DEFAULT_EMPTY_DESC);
     return;
   }
 
@@ -989,6 +1089,13 @@ function renderCurrentView() {
   emptyState.classList.add("hidden");
   cardsArea.classList.remove("hidden");
   renderCard();
+}
+
+function setEmptyStateCopy(title, desc) {
+  const titleEl = emptyState?.querySelector("h3");
+  const descEl = emptyState?.querySelector("p");
+  if (titleEl) titleEl.textContent = title || DEFAULT_EMPTY_TITLE;
+  if (descEl) descEl.textContent = desc || DEFAULT_EMPTY_DESC;
 }
 
 function renderWrongReviewView() {

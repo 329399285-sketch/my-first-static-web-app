@@ -529,6 +529,14 @@ body::after {
   color: var(--muted);
 }
 
+body.admin-mode #reviewSection {
+  display: none;
+}
+
+body.admin-mode .topbar-actions .action-group:first-child {
+  display: none;
+}
+
 .cloud-sync-status {
   margin-top: 10px;
   display: inline-flex;
@@ -607,6 +615,83 @@ body::after {
   flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
+}
+
+.admin-console {
+  border-radius: 18px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.admin-console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-console-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.admin-console-head p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.admin-users-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-user-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel-strong) 92%, transparent);
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-user-row.active {
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-soft) 64%, transparent);
+}
+
+.admin-user-main {
+  min-width: 0;
+}
+
+.admin-user-name {
+  font-size: 0.84rem;
+  font-weight: 700;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.admin-user-meta {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.admin-switch-btn[disabled] {
+  opacity: 0.8;
+  cursor: default;
+}
+
+.admin-user-empty {
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 8px 4px;
 }
 
 .action-group {
