@@ -517,6 +517,7 @@ async function authPost(path, payload) {
 async function apiFetch(url, options = {}, config = {}) {
   const allowWithoutToken = Boolean(config.allowWithoutToken);
   const silentAuthError = Boolean(config.silentAuthError);
+  const retryWithQueryToken = Boolean(config.retryWithQueryToken);
   const headers = { ...(options.headers || {}) };
 
   if (state.authToken) {
@@ -533,6 +534,16 @@ async function apiFetch(url, options = {}, config = {}) {
       body = await response.json();
     } catch {
       body = null;
+    }
+
+    if (response.status === 401 && state.authToken && !retryWithQueryToken) {
+      const retryUrl = buildUrlWithAuthToken(url, state.authToken);
+      if (retryUrl && retryUrl !== url) {
+        return apiFetch(retryUrl, options, {
+          ...config,
+          retryWithQueryToken: true,
+        });
+      }
     }
 
     if (response.status === 401 && !silentAuthError) {
@@ -557,6 +568,28 @@ async function apiFetch(url, options = {}, config = {}) {
   } catch (error) {
     console.warn("请求失败：", url, error);
     return { ok: false, message: "网络请求失败" };
+  }
+}
+
+function buildUrlWithAuthToken(inputUrl, token) {
+  const cleanToken = String(token || "").trim();
+  if (!cleanToken) return inputUrl;
+
+  try {
+    const resolved = new URL(String(inputUrl || ""), window.location.origin);
+    if (!resolved.searchParams.has("authToken")) {
+      resolved.searchParams.set("authToken", cleanToken);
+    }
+    const original = String(inputUrl || "");
+    const isAbsolute = /^https?:\/\//i.test(original);
+    return isAbsolute
+      ? resolved.toString()
+      : `${resolved.pathname}${resolved.search}${resolved.hash}`;
+  } catch {
+    const base = String(inputUrl || "");
+    if (!base) return inputUrl;
+    const joiner = base.includes("?") ? "&" : "?";
+    return `${base}${joiner}authToken=${encodeURIComponent(cleanToken)}`;
   }
 }
 
@@ -842,7 +875,7 @@ function formatCloudErrorStatus(fallback) {
     return "云端：未配置存储连接串 AZURE_STORAGE_CONNECTION_STRING";
   }
   if (/unauthorized|401/i.test(message)) {
-    return "云端：鉴权失败，请重新登录";
+    return "云端：鉴权失败（API 未读取到 Token），请重新部署后刷新页面";
   }
   if (/forbidden|403/i.test(message)) {
     return "云端：无权限访问，请确认当前账号为管理员";

@@ -335,8 +335,17 @@ function readToken(req) {
   if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
     return auth.slice(7).trim();
   }
+
   const fromHeader = readHeader(req, "x-auth-token");
-  return String(fromHeader || "").trim() || "";
+  if (String(fromHeader || "").trim()) {
+    return String(fromHeader).trim();
+  }
+
+  const fromQuery =
+    readQuery(req, "authToken") ||
+    readQuery(req, "token") ||
+    readQuery(req, "x-auth-token");
+  return String(fromQuery || "").trim() || "";
 }
 
 function readHeader(req, headerName) {
@@ -348,6 +357,17 @@ function readHeader(req, headerName) {
   }
 
   return headers[headerName] || headers[String(headerName).toLowerCase()] || headers[String(headerName).toUpperCase()] || "";
+}
+
+function readQuery(req, key) {
+  const query = req?.query;
+  if (!query) return "";
+
+  if (typeof query.get === "function") {
+    return query.get(key) || query.get(String(key).toLowerCase()) || "";
+  }
+
+  return query[key] || query[String(key).toLowerCase()] || query[String(key).toUpperCase()] || "";
 }
 
 function publicUser(user) {
